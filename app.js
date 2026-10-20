@@ -144,7 +144,6 @@
   }
   function render() {
     if (ICU.beforeLeave) { ICU.beforeLeave(); ICU.beforeLeave = null; }
-    if (!ICU.auth.isUnlocked()) { document.body.classList.remove('print-mode'); document.title = 'ICU Handover'; ICU.lockScreen(render); return; }
     const r = parse();
     const view = ICU.views[r.name];
     const out = view(r.params, r.q) || {};
@@ -479,16 +478,6 @@
         '<label class="fld">บทบาท<select name="role">' + Object.keys(ICU.ROLES).map(k => '<option value="' + k + '"' + (k === st.role ? ' selected' : '') + '>' + ICU.ROLES[k] + '</option>').join('') + '</select></label>' +
         '<div class="fld"><span>&nbsp;</span><button class="btn primary" type="submit">บันทึก</button></div></div>' +
         '<p class="hint">ชื่อนี้ใช้บันทึกว่าใครสร้าง / แก้ไขข้อมูล (Audit log) และเป็นค่าเริ่มต้นของ "ผู้ส่งเวร"</p></form>' +
-        '<form class="card" id="set-pass" autocomplete="off"><h2 class="sec-t">' + icon('shield') + 'เข้าสู่ระบบ / ล็อกหน้าจอ</h2><div class="grid g4">' +
-        '<label class="fld">ชื่อผู้ใช้สำหรับเข้าระบบ<input name="user" required autocomplete="username" autocapitalize="off" value="' + esc(ICU.auth.user()) + '"></label>' +
-        '<label class="fld">รหัสผ่านปัจจุบัน<input name="cur" type="password" required autocomplete="current-password"></label>' +
-        '<label class="fld">รหัสผ่านใหม่ (อย่างน้อย 6 ตัว)<input name="p1" type="password" required minlength="6" autocomplete="new-password"></label>' +
-        '<label class="fld">ยืนยันรหัสผ่านใหม่<input name="p2" type="password" required minlength="6" autocomplete="new-password"></label>' +
-        '<div class="fld"><span>&nbsp;</span><button class="btn primary" type="submit">เปลี่ยนรหัสผ่าน</button></div></div></form>' +
-        '<form class="card" id="set-lock"><div class="grid g4"><label class="fld span2">ล็อกอัตโนมัติเมื่อไม่ใช้งาน<select name="lockMinutes">' +
-        [5, 10, 15, 30, 60].map(m => '<option value="' + m + '"' + (+st.lockMinutes === m ? ' selected' : '') + '>' + m + ' นาที</option>').join('') + '</select></label>' +
-        '<div class="fld"><span>&nbsp;</span><button class="btn primary" type="submit">บันทึก</button></div></div>' +
-        '<p class="hint">ล็อกทันที: ปุ่มรูปแม่กุญแจมุมขวาบน · รหัสผ่านเก็บเป็นค่า hash ในเครื่อง ไม่ได้เก็บตัวรหัส</p></form>' +
         '<form class="card" id="set-print"><h2 class="sec-t">' + icon('print') + 'หัวกระดาษแบบฟอร์ม A4</h2><div class="grid g4">' +
         '<label class="fld span2">ชื่อโรงพยาบาล<input name="hospital" value="' + esc(st.hospital) + '"></label>' +
         '<label class="fld span2">ชื่อภาษาอังกฤษ<input name="hospitalEn" value="' + esc(st.hospitalEn) + '"></label>' +
@@ -508,17 +497,6 @@
       mount(el) {
         el.querySelector('#set-user').onsubmit = e => { e.preventDefault(); S.saveSettings(Object.fromEntries(new FormData(e.target))); UI.toast('บันทึกแล้ว', 'ok'); render(); };
         el.querySelector('#set-print').onsubmit = e => { e.preventDefault(); S.saveSettings(Object.fromEntries(new FormData(e.target))); UI.toast('บันทึกแล้ว', 'ok'); };
-        el.querySelector('#set-lock').onsubmit = e => { e.preventDefault(); S.saveSettings({ lockMinutes: +e.target.lockMinutes.value }); UI.toast('บันทึกแล้ว', 'ok'); };
-        el.querySelector('#set-pass').onsubmit = e => {
-          e.preventDefault();
-          const f = e.target;
-          if (f.p1.value !== f.p2.value) return UI.toast('รหัสผ่านใหม่ทั้งสองช่องไม่ตรงกัน', 'error');
-          const err = ICU.auth.change(f.cur.value, f.user.value, f.p1.value);
-          if (err) return UI.toast(err, 'error');
-          localStorage.setItem('icuhandover.lastUser', f.user.value.trim());
-          f.reset(); f.user.value = ICU.auth.user();
-          UI.toast('เปลี่ยนรหัสผ่านแล้ว (ใช้ได้เฉพาะเครื่องนี้)', 'ok');
-        };
         el.querySelector('#exp').onclick = () => {
           const a = document.createElement('a');
           a.href = URL.createObjectURL(new Blob([S.exportJSON()], { type: 'application/json' }));
@@ -549,7 +527,6 @@
 
   /* ---------------------------------------------------------------- start */
   window.addEventListener('hashchange', render);
-  document.getElementById('lock-btn').onclick = () => { if (ICU.beforeLeave) { ICU.beforeLeave(); ICU.beforeLeave = null; } ICU.auth.lock(); render(); };
   tick(); setInterval(tick, 30000);
   render();
   if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
