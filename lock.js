@@ -52,6 +52,16 @@
     return h;
   }
 
+  /* password as typed -> what is hashed: trim, Thai digits ๐-๙ -> 0-9, and the number row typed with a Thai
+     (Kedmanee) keyboard ( ๅ / - ภ ถ ุ ึ ค ต จ ) -> 1 2 3 4 5 6 7 8 9 0 when the whole password is from that row */
+  const KED = { 'ๅ': '1', '/': '2', '-': '3', 'ภ': '4', 'ถ': '5', 'ุ': '6', 'ึ': '7', 'ค': '8', 'ต': '9', 'จ': '0' };
+  function norm(p) {
+    let s = String(p == null ? '' : p).trim().replace(/[\u0E50-\u0E59]/g, d => String(d.charCodeAt(0) - 0x0E50));
+    if (s && /[^\x00-\x7F]/.test(s) && Array.from(s).every(ch => KED[ch] || /\d/.test(ch))) s = Array.from(s).map(ch => KED[ch] || ch).join('');
+    return s;
+  }
+  const hasThai = s => /[\u0E00-\u0E7F]/.test(String(s));
+
   /* -------------------------------------------------------------- auth */
   const cred = () => { try { return JSON.parse(localStorage.getItem(CRED_KEY)) || DEFAULT_CRED; } catch (e) { return DEFAULT_CRED; } };
   const idleMin = () => +((ICU.store && ICU.store.settings().lockMinutes) || 15);
@@ -77,7 +87,7 @@
     login(user, pass) {
       if (A.waitSeconds() > 0) return false;
       const c = cred();
-      const ok = String(user).trim().toLowerCase() === c.user && derive(user, pass, c.salt, c.iter) === c.hash;
+      const ok = String(user).trim().toLowerCase() === c.user && derive(user, norm(pass), c.salt, c.iter) === c.hash;
       const f = JSON.parse(localStorage.getItem(FAIL_KEY) || '{"n":0,"t":0}');
       if (ok) {
         localStorage.removeItem(FAIL_KEY);
@@ -87,10 +97,11 @@
     },
     change(curPass, newUser, newPass) {
       const c = cred();
-      if (derive(c.user, curPass, c.salt, c.iter) !== c.hash) return 'รหัสผ่านปัจจุบันไม่ถูกต้อง';
+      if (derive(c.user, norm(curPass), c.salt, c.iter) !== c.hash) return 'รหัสผ่านปัจจุบันไม่ถูกต้อง';
+      if (hasThai(newUser) || hasThai(norm(newPass))) return 'ชื่อผู้ใช้และรหัสผ่านใหม่ต้องเป็นภาษาอังกฤษ / ตัวเลข';
       const salt = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
       const user = String(newUser).trim().toLowerCase();
-      localStorage.setItem(CRED_KEY, JSON.stringify({ user, iter: c.iter, salt, hash: derive(user, newPass, salt, c.iter) }));
+      localStorage.setItem(CRED_KEY, JSON.stringify({ user, iter: c.iter, salt, hash: derive(user, norm(newPass), salt, c.iter) }));
       return '';
     }
   };
@@ -101,19 +112,30 @@
     const v = document.getElementById('view');
     v.innerHTML = '<div class="lock-wrap"><form class="lock-card" id="lock-form" autocomplete="on">' +
       '<span class="brand-logo big" aria-hidden="true"></span><h1>ICU Handover</h1><p class="muted">แบบส่งเวรผู้ป่วยวิกฤต · เข้าสู่ระบบ</p>' +
-      '<label class="fld">ชื่อผู้ใช้<input name="user" autocomplete="username" autocapitalize="off" required></label>' +
-      '<label class="fld">รหัสผ่าน<input name="pass" type="password" autocomplete="current-password" inputmode="numeric" required></label>' +
+      '<label class="fld">ชื่อผู้ใช้<input name="user" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" required></label>' +
+      '<label class="fld">รหัสผ่าน<span class="pass-row"><input name="pass" type="password" autocomplete="current-password" inputmode="numeric" autocorrect="off" spellcheck="false" required>' +
+      '<button type="button" class="eye" id="lock-eye" aria-label="แสดงรหัสผ่าน">แสดง</button></span></label>' +
+      '<p class="lock-warn" id="lock-warn" hidden>แป้นพิมพ์เป็นภาษาไทยอยู่ - เปลี่ยนเป็นภาษาอังกฤษ (EN) ก่อนพิมพ์ชื่อผู้ใช้</p>' +
       '<p class="lock-err" id="lock-err" role="alert"></p>' +
       '<button class="btn primary" type="submit">เข้าสู่ระบบ</button>' +
       '<p class="hint">ข้อมูลผู้ป่วยเก็บในเครื่องนี้เท่านั้น · ระบบล็อกอัตโนมัติเมื่อไม่ใช้งาน ' + idleMin() + ' นาที</p></form></div>';
     const f = v.querySelector('#lock-form'), err = v.querySelector('#lock-err');
     f.user.value = localStorage.getItem('icuhandover.lastUser') || '';
     (f.user.value ? f.pass : f.user).focus();
+    const warn = v.querySelector('#lock-warn'), eye = v.querySelector('#lock-eye');
+    const check = () => { warn.hidden = !(hasThai(f.user.value) || hasThai(norm(f.pass.value))); };
+    f.user.oninput = f.pass.oninput = check;
+    eye.onclick = () => {
+      const show = f.pass.type === 'password';
+      f.pass.type = show ? 'text' : 'password';
+      eye.textContent = show ? 'ซ่อน' : 'แสดง';
+      f.pass.focus();
+    };
     f.onsubmit = e => {
       e.preventDefault();
       const w = A.waitSeconds();
       if (w > 0) { err.textContent = 'ใส่รหัสผิดหลายครั้ง รอ ' + w + ' วินาที'; return; }
-      const btn = f.querySelector('button');
+      const btn = f.querySelector('button[type=submit]');
       btn.disabled = true; btn.textContent = 'กำลังตรวจสอบ...';
       setTimeout(() => {
         if (A.login(f.user.value, f.pass.value)) {
@@ -124,7 +146,10 @@
           btn.disabled = false; btn.textContent = 'เข้าสู่ระบบ';
           f.pass.value = ''; f.pass.focus();
           const w2 = A.waitSeconds();
-          err.textContent = w2 > 0 ? 'ใส่รหัสผิดหลายครั้ง รอ ' + w2 + ' วินาที' : 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง';
+          err.textContent = w2 > 0 ? 'ใส่รหัสผิดหลายครั้ง รอ ' + w2 + ' วินาที'
+            : hasThai(f.user.value) ? 'ชื่อผู้ใช้ถูกพิมพ์เป็นภาษาไทย - เปลี่ยนแป้นพิมพ์เป็น EN แล้วพิมพ์ใหม่'
+            : 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง (กด "แสดง" เพื่อดูรหัสที่พิมพ์)';
+          check();
         }
       }, 30);
     };

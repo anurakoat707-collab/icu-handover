@@ -372,6 +372,10 @@ body.locked #view { max-width: none; padding: 0; }
 .lock-card .btn { width: 100%; }
 .lock-card .hint { justify-content: center; text-align: center; }
 .brand-logo.big { width: 64px; height: 64px; border-radius: 18px; background-size: 42px; margin: 0 auto; }
+.pass-row { display: flex; gap: 6px; }
+.pass-row input { flex: 1; min-width: 0; }
+.eye { flex: none; min-width: 64px; border: 1px solid #CBD5E1; border-radius: 10px; background: #fff; color: var(--navy); font-weight: 700; cursor: pointer; }
+.lock-warn { margin: 0; padding: 8px 10px; border-radius: 10px; background: var(--amber-l); color: #78350F; font-size: 13.5px; font-weight: 600; text-align: center; }
 .lock-err { min-height: 1.2em; margin: 0; color: #B91C1C; font-weight: 600; font-size: 14px; text-align: center; }
 
 /* ---------------------------------------------------------- breakpoints */
