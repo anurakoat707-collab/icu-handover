@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0B2545">
+<meta name="description" content="ICU Handover Dashboard - แบบส่งเวรผู้ป่วยวิกฤตแบบดิจิทัล (Prototype ข้อมูลสมมติ)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ICU Handover">
+<title>ICU Handover</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="stylesheet" href="css/style.css">
+<link rel="stylesheet" href="css/print.css">
+</head>
+<body>
+<div class="demo-bar no-print" role="note">ข้อมูลผู้ป่วยเก็บในเครื่องนี้เท่านั้น<span class="demo-more">&nbsp;· ล็อกหน้าจอเมื่อไม่ใช้งาน · Export สำรองข้อมูลเป็นประจำ</span></div>
+
+<div class="shell">
+  <aside class="sidebar no-print" aria-label="เมนูหลัก">
+    <a class="brand" href="#/home">
+      <span class="brand-logo" aria-hidden="true"></span>
+      <span class="brand-text"><b>ICU Handover</b><small>Digital Checklist</small></span>
+    </a>
+    <nav class="side-nav" id="side-nav"></nav>
+    <a class="side-user" href="#/settings" id="side-user"></a>
+  </aside>
+
+  <div class="main">
+    <header class="topbar no-print">
+      <button type="button" class="icon-btn back-btn" id="back-btn" aria-label="ย้อนกลับ" hidden></button>
+      <a class="brand brand-mobile" href="#/home"><span class="brand-logo" aria-hidden="true"></span><b>ICU Handover</b></a>
+      <div class="top-title" id="top-title"></div>
+      <div class="top-right">
+        <span class="top-clock" id="top-clock"></span>
+        <button type="button" class="icon-btn" id="lock-btn" aria-label="ล็อกหน้าจอ" title="ล็อกหน้าจอ"><svg class="ic" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></button>
+        <a class="avatar" id="top-avatar" href="#/settings" aria-label="ตั้งค่าผู้ใช้"></a>
+      </div>
+    </header>
+    <main id="view" tabindex="-1"></main>
+  </div>
+</div>
+
+<nav class="bottom-nav no-print" id="bottom-nav" aria-label="เมนูหลัก"></nav>
+
+<dialog id="dialog" class="dialog"></dialog>
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+<div id="print-root"></div>
+
+<script src="js/config.js"></script>
+<script src="js/lock.js"></script>
+<script src="js/demo-data.js"></script>
+<script src="js/store.js"></script>
+<script src="js/validate.js"></script>
+<script src="js/print.js"></script>
+<script src="js/editor.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

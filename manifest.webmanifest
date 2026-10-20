@@ -1,0 +1,17 @@
+{
+  "name": "ICU Handover Dashboard",
+  "short_name": "ICU Handover",
+  "description": "แบบส่งเวรผู้ป่วยวิกฤต (ICU Handover Checklist) แบบดิจิทัล - Prototype ข้อมูลสมมติ",
+  "lang": "th",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#F4F7FA",
+  "theme_color": "#0B2545",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
