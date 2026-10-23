@@ -17,7 +17,7 @@
 <link rel="stylesheet" href="print.css">
 </head>
 <body>
-<div class="demo-bar no-print" role="note">ข้อมูลผู้ป่วยเก็บในเครื่องนี้เท่านั้น<span class="demo-more">&nbsp;· Export สำรองข้อมูลเป็นประจำ</span></div>
+<div class="demo-bar no-print" role="note">ข้อมูลกลางของวอร์ด · ใช้ชื่อย่อ + เตียง<span class="demo-more">&nbsp;· ไม่ใส่ข้อมูลเกินจำเป็น</span></div>
 
 <div class="shell">
   <aside class="sidebar no-print" aria-label="เมนูหลัก">
@@ -36,6 +36,7 @@
       <div class="top-title" id="top-title"></div>
       <div class="top-right">
         <span class="top-clock" id="top-clock"></span>
+        <button type="button" class="sync-chip" id="sync-chip" hidden></button>
         <a class="avatar" id="top-avatar" href="#/settings" aria-label="ตั้งค่าผู้ใช้"></a>
       </div>
     </header>
@@ -52,6 +53,7 @@
 <script src="config.js"></script>
 <script src="demo-data.js"></script>
 <script src="store.js"></script>
+<script src="cloud.js"></script>
 <script src="validate.js"></script>
 <script src="print.js"></script>
 <script src="editor.js"></script>

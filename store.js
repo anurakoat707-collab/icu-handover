@@ -55,14 +55,19 @@
   /* ------------------------------------------------------------ persistence */
   let db = null;
   function fresh() {
-    return { version: 1, patients: [], handovers: [], audit: [], settings: Object.assign({}, ICU.DEFAULT_SETTINGS), demoSeeded: false };
+    return { version: 1, patients: [], handovers: [], audit: [], settings: Object.assign({}, ICU.DEFAULT_SETTINGS), demoSeeded: false,
+      sync: { dirty: {}, ver: {}, base: {}, auditOut: [], dels: [], lastPull: '', lastAuditPull: '' } };
   }
   function load() {
     try { db = JSON.parse(localStorage.getItem(KEY)) || null; } catch (e) { db = null; }
     if (!db || !Array.isArray(db.patients)) db = fresh();
     db.settings = Object.assign({}, ICU.DEFAULT_SETTINGS, db.settings || {});
+    /* cloud sync bookkeeping: dirty records, server versions, last synced copies, unsent audit, deletes */
+    db.sync = Object.assign(fresh().sync, db.sync || {});
     return db;
   }
+  const keyOf = (kind, id) => kind + ':' + id;
+  function markDirty(kind, id) { db.sync.dirty[keyOf(kind, id)] = true; if (ICU.cloud) ICU.cloud.schedule(); }
   function save() {
     try { localStorage.setItem(KEY, JSON.stringify(db)); return true; }
     catch (e) { if (ICU.toast) ICU.toast('บันทึกไม่สำเร็จ: พื้นที่เก็บข้อมูลในเครื่องเต็ม (ลองลบประวัติเก่าหรือ Export)', 'error'); return false; }
@@ -81,12 +86,15 @@
   function audit(entity, entityId, action, changes, note) {
     const last = db.audit[db.audit.length - 1];
     const t = U.now();
+    /* consecutive edits of the same record are merged - only while that entry is not sent to the cloud yet */
     if (action === 'update' && last && last.action === 'update' && last.entityId === entityId && last.by === me()
-        && Date.parse(t) - Date.parse(last.at) < 5 * 60 * 1000) {
+        && Date.parse(t) - Date.parse(last.at) < 5 * 60 * 1000 && (!ICU.cloud || !ICU.cloud.enabled() || db.sync.auditOut.includes(last.id))) {
       last.changes = Array.from(new Set(last.changes.concat(changes || [])));
       last.at = t;
     } else {
-      db.audit.push({ id: U.uid('a'), entity, entityId, action, by: me(), at: t, changes: changes || [], note: note || '' });
+      const a = { id: U.uid('a'), entity, entityId, action, by: me(), at: t, changes: changes || [], note: note || '' };
+      db.audit.push(a);
+      db.sync.auditOut.push(a.id);
     }
     if (db.audit.length > 3000) db.audit.splice(0, db.audit.length - 3000);
   }
@@ -103,7 +111,7 @@
     patient: id => db.patients.find(p => p.id === id) || null,
     savePatient(data) {
       const hn = String(data.hn || '').trim();
-      const dup = db.patients.find(p => !p.archivedAt && p.hn === hn && p.id !== data.id);
+      const dup = hn && db.patients.find(p => !p.archivedAt && p.hn === hn && p.id !== data.id);
       if (dup) return { error: 'HN ' + hn + ' มีอยู่แล้ว (' + dup.name + ')' };
       const t = U.now();
       let p = data.id && S.patient(data.id);
@@ -116,6 +124,7 @@
         db.patients.push(p);
         audit('patient', p.id, 'create', []);
       }
+      markDirty('p', p.id);
       save();
       return { patient: p };
     },
@@ -124,6 +133,7 @@
       if (!p) return;
       p.archivedAt = U.now(); p.archivedBy = me();
       audit('patient', id, 'archive', []);
+      markDirty('p', id);
       save();
     },
 
@@ -160,6 +170,7 @@
       }
       db.handovers.push(h);
       audit('handover', h.id, 'create', [], src ? 'คัดลอกจากเวร' + U.shift(src.shift).label + ' ' + U.thaiDate(src.date) : '');
+      markDirty('h', h.id);
       save();
       return h;
     },
@@ -176,6 +187,7 @@
       if (h.status === 'ready_for_review') { h.status = 'in_progress'; reopened = true; }
       h.updatedAt = U.now(); h.updatedBy = me();
       audit('handover', id, 'update', ch, reopened ? 'แก้ไขหลังส่งตรวจ -> กลับเป็น In Progress' : '');
+      markDirty('h', id);
       save();
       return reopened ? 'reopened' : true;
     },
@@ -189,6 +201,7 @@
       Object.assign(h, extra || {});
       h.updatedAt = t; h.updatedBy = me();
       audit('handover', id, status === 'handed_over' ? 'submit' : 'status', [ICU.HANDOVER_STATUS[status].label]);
+      markDirty('h', id);
       save();
     },
     amend(id, reason) {
@@ -202,6 +215,7 @@
       db.handovers.push(h);
       audit('handover', src.id, 'amend', [], 'สร้างบันทึกแก้ไข: ' + reason);
       audit('handover', h.id, 'create', [], 'บันทึกแก้ไขของ #' + src.id.slice(-5) + ': ' + reason);
+      markDirty('h', h.id);
       save();
       return h;
     },
@@ -210,9 +224,66 @@
       if (!h || h.status !== 'draft') return false;
       db.handovers = db.handovers.filter(x => x.id !== id);
       audit('handover', id, 'discard', [], 'ลบฉบับร่างที่ยังไม่ได้กรอก');
+      const k = keyOf('h', id);
+      if (db.sync.ver[k] != null) db.sync.dels.push(id);
+      delete db.sync.dirty[k]; delete db.sync.ver[k]; delete db.sync.base[k];
+      if (ICU.cloud) ICU.cloud.schedule();
       save();
       return true;
     },
+
+    /* ---------------------------------------------------- cloud sync helpers */
+    syncState: () => db.sync,
+    pendingCount: () => Object.keys(db.sync.dirty).length + db.sync.auditOut.length + db.sync.dels.length,
+    record(kind, id) { return kind === 'p' ? S.patient(id) : S.handover(id); },
+    /* a row from the server: replaces the local copy unless this device has unsent changes; returns true when applied */
+    applyRemote(kind, row, force) {
+      const k = keyOf(kind, row.id);
+      if (!force && db.sync.dirty[k]) return false;
+      if (!force && db.sync.ver[k] != null && row.version <= db.sync.ver[k]) return false;
+      const list = kind === 'p' ? db.patients : db.handovers;
+      const data = Object.assign({}, row.data, { id: row.id });
+      const i = list.findIndex(x => x.id === row.id);
+      if (i >= 0) list[i] = data; else list.push(data);
+      db.sync.ver[k] = row.version;
+      db.sync.base[k] = JSON.stringify(row.data);
+      if (force) delete db.sync.dirty[k];
+      return true;
+    },
+    /* the server no longer has this draft (deleted on another phone) */
+    dropRemoved(kind, ids) {
+      let n = 0;
+      const keep = new Set(ids);
+      const list = kind === 'p' ? db.patients : db.handovers;
+      for (let i = list.length - 1; i >= 0; i--) {
+        const k = keyOf(kind, list[i].id);
+        if (db.sync.ver[k] != null && !db.sync.dirty[k] && !keep.has(list[i].id)) {
+          list.splice(i, 1); delete db.sync.ver[k]; delete db.sync.base[k]; n++;
+        }
+      }
+      return n;
+    },
+    sent(kind, id, version, json) {
+      const k = keyOf(kind, id);
+      db.sync.ver[k] = version;
+      db.sync.base[k] = json;
+      const r = S.record(kind, id);
+      if (r && JSON.stringify(r) === json) delete db.sync.dirty[k];
+    },
+    mergeAudit(rows) {
+      const have = new Set(db.audit.map(a => a.id));
+      let n = 0;
+      rows.forEach(r => {
+        if (have.has(r.id)) return;
+        db.audit.push({ id: r.id, entity: r.entity, entityId: r.entity_id, action: r.action, by: r.by_name, at: r.at, changes: r.changes || [], note: r.note || '' });
+        n++;
+      });
+      if (n) db.audit.sort((a, b) => String(a.at).localeCompare(String(b.at)));
+      if (db.audit.length > 3000) db.audit.splice(0, db.audit.length - 3000);
+      return n;
+    },
+    /* forget everything local (data comes back from the cloud) - settings are kept */
+    resetLocal() { const s = db.settings; db = fresh(); db.settings = s; db.demoSeeded = true; save(); },
 
     auditOf: id => db.audit.filter(a => a.entityId === id).reverse(),
     auditAll: () => db.audit.slice().reverse(),

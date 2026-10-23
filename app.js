@@ -144,6 +144,8 @@
   }
   function render() {
     if (ICU.beforeLeave) { ICU.beforeLeave(); ICU.beforeLeave = null; }
+    if (ICU.cloud.enabled() && !ICU.cloud.signedIn()) { document.body.classList.remove('print-mode'); document.title = 'ICU Handover'; ICU.cloud.loginScreen(render); return; }
+    document.body.classList.remove('locked');
     const r = parse();
     const view = ICU.views[r.name];
     const out = view(r.params, r.q) || {};
@@ -158,7 +160,8 @@
     const el = document.getElementById('view');
     el.innerHTML = out.html || '';
     document.title = (out.title ? out.title + ' - ' : '') + 'ICU Handover';
-    if (!out.keepScroll) window.scrollTo(0, 0);
+    if (!out.keepScroll && !ICU._soft) window.scrollTo(0, 0);
+    ICU.cloud.paintChip();
     if (out.mount) out.mount(el);
   }
   ICU.render = render;
@@ -173,7 +176,7 @@
     return '<div class="page-head"><div><h1>' + esc(title) + (en ? ' <span class="en">' + esc(en) + '</span>' : '') + '</h1></div>' + (right || '') + '</div>';
   }
   function patientMeta(p) {
-    return 'HN ' + esc(p.hn) + (p.an ? ' · AN ' + esc(p.an) : '') + ' · ' + (p.age != null && p.age !== '' ? esc(p.age) + ' ปี' : '-') + ' / ' + U.sexLabel(p.sex);
+    return [p.hn ? 'HN ' + esc(p.hn) : '', p.an ? 'AN ' + esc(p.an) : ''].filter(Boolean).concat('').join(' · ') + (p.age != null && p.age !== '' ? esc(p.age) + ' ปี' : '-') + ' / ' + U.sexLabel(p.sex);
   }
   ICU.patientMeta = patientMeta;
 
@@ -227,7 +230,7 @@
         '<div class="kpis">' + kpi('all', k.all, 'ผู้ป่วยในเวรนี้', 'navy') + kpi('none', k.none, 'ยังไม่เริ่ม', 'gray') + kpi('progress', k.progress, 'Draft / In Progress', 'blue') +
         kpi('ready_for_review', k.ready_for_review, 'Ready for Review', 'amber') + kpi('handed_over', k.handed_over, 'ส่งเวรแล้ว', 'teal') + '</div>' +
         (show.length ? '<div class="pcards">' + cards + '</div>' : '<div class="empty card">' + icon('users', 40) + '<p>ไม่มีผู้ป่วยในรายการนี้</p><div class="btns" style="justify-content:center"><a class="btn primary" href="#/patients/new">' + icon('plus') + 'เพิ่มผู้ป่วย</a>' +
-          (S.patients({ includeArchived: true }).length ? '' : '<a class="btn ghost" href="#/settings">ลองใช้ด้วยข้อมูลตัวอย่าง</a>') + '</div></div>'),
+          (S.patients({ includeArchived: true }).length || ICU.cloud.enabled() ? '' : '<a class="btn ghost" href="#/settings">ลองใช้ด้วยข้อมูลตัวอย่าง</a>') + '</div></div>'),
       mount(el) {
         el.querySelector('#home-date').onchange = e => UI.go('#/home?date=' + e.target.value + '&shift=' + shift);
         el.querySelectorAll('[data-open]').forEach(b => { b.onclick = () => ICU.openHandover(b.dataset.open, date, shift); });
@@ -305,8 +308,8 @@
       html: pageHead(title, p ? 'Edit Patient' : 'New Patient') +
         '<form id="pform" class="stack" novalidate>' +
         '<section class="card"><h2 class="sec-t">' + icon('user') + 'ข้อมูลผู้ป่วย</h2><div class="grid g4">' +
-        '<label class="fld span2">ชื่อ-นามสกุล *<input name="name" required value="' + val('name') + '" placeholder="เช่น นายสมชาย ใจดี"></label>' +
-        '<label class="fld">HN *<input name="hn" required inputmode="numeric" value="' + val('hn') + '" placeholder="เช่น 123456"></label>' +
+        '<label class="fld span2">ชื่อย่อ / ชื่อเรียก *<input name="name" required maxlength="40" value="' + val('name') + '" placeholder="เช่น นาย ส.ใ. หรือ ป้าสมใจ"></label>' +
+        '<label class="fld">HN (ไม่บังคับ)<input name="hn" inputmode="numeric" value="' + val('hn') + '"></label>' +
         '<label class="fld">AN<input name="an" inputmode="numeric" value="' + val('an') + '" placeholder="เช่น 654321"></label>' +
         '<label class="fld">อายุ (ปี) *<input name="age" type="number" min="0" max="130" required value="' + val('age') + '"></label>' +
         '<label class="fld">เพศ *<select name="sex" required>' + opt('', 'เลือกเพศ', v.sex || '') + opt('M', 'ชาย', v.sex) + opt('F', 'หญิง', v.sex) + '</select></label>' +
@@ -322,7 +325,7 @@
         '<label class="fld span2">ประวัติการแพ้ยา<input name="allergies" value="' + val('allergies') + '"></label>' +
         '<label class="fld span4">หมายเหตุเพิ่มเติม<textarea name="note" rows="2">' + val('note') + '</textarea></label>' +
         '</div></section>' +
-        '<p class="hint">' + icon('shield', 14) + ' ข้อมูลเก็บในเครื่องนี้เท่านั้น · ใส่เท่าที่จำเป็นต่อการส่งเวร</p>' +
+        '<p class="hint">' + icon('shield', 14) + ' ใช้ชื่อย่อ + เตียง · ใส่ข้อมูลเท่าที่จำเป็นต่อการส่งเวร</p>' +
         '<div class="action-bar"><a class="btn ghost" href="' + (p ? '#/patient/' + p.id : '#/patients') + '">ยกเลิก</a><button class="btn primary" type="submit">' + icon('check') + 'บันทึก</button></div>' +
         '</form>',
       mount(el) {
@@ -470,6 +473,7 @@
         (a.changes.length ? '<br><small class="muted">' + esc(a.changes.join(', ')) + '</small>' : '') + (a.note ? '<br><small class="muted">' + esc(a.note) + '</small>' : '') + '</td></tr>';
     }).join('');
     const size = Math.round((localStorage.getItem('icuhandover.v1') || '').length / 1024);
+    const cloud = ICU.cloud.enabled(), cs = ICU.cloud.status();
     return {
       title: 'ตั้งค่า',
       html: pageHead('ตั้งค่า', 'Settings') +
@@ -484,12 +488,19 @@
         '<label class="fld span2">หอผู้ป่วย<input name="ward" value="' + esc(st.ward) + '"></label>' +
         '<div class="fld"><span>&nbsp;</span><button class="btn primary" type="submit">บันทึก</button></div>' +
         '<div class="fld"><span>&nbsp;</span><a class="btn ghost" href="#/print/blank">' + icon('file') + 'แบบฟอร์มเปล่า</a></div></div></form>' +
-        '<section class="card"><h2 class="sec-t">' + icon('download') + 'สำรอง / ย้ายข้อมูล</h2>' +
-        '<p class="hint">ข้อมูลเก็บในเครื่องนี้เท่านั้น (' + raw.patients.length + ' ผู้ป่วย, ' + raw.handovers.length + ' บันทึก, ~' + size + ' KB) มือถือกับคอมไม่ซิงค์กันเอง ใช้ Export / Import</p>' +
-        '<div class="btns"><button class="btn ghost" id="exp">' + icon('download') + 'Export (.json)</button>' +
-        '<label class="btn ghost">' + icon('upload') + 'Import (.json)<input type="file" id="imp" accept=".json,application/json" hidden></label>' +
-        '<button class="btn ghost" id="demo">โหลดข้อมูลตัวอย่าง (สมมติ)</button><button class="btn danger" id="wipe">ลบข้อมูลทั้งหมด</button></div>' +
-        '<p class="hint">ข้อมูลตัวอย่างมีป้าย "ข้อมูลสมมติ" กดอีกครั้งเพื่อลบชุดเดิมแล้วสร้างใหม่ ข้อมูลผู้ป่วยจริงไม่ถูกแตะ</p></section>' +
+        (cloud
+          ? '<section class="card"><h2 class="sec-t">' + icon('users') + 'ข้อมูลกลางของวอร์ด (Cloud)</h2>' +
+            '<p class="hint">ทุกเครื่องที่เข้าระบบด้วยรหัสวอร์ดเห็นข้อมูลชุดเดียวกัน · ซิงก์อัตโนมัติทุก ' + (ICU.CLOUD.pollSeconds || 15) + ' วินาที · ใช้แบบออฟไลน์ได้ ข้อมูลจะส่งเมื่อมีเน็ต</p>' +
+            '<p>สถานะ: <b>' + esc(cs.lastOk ? 'ซิงก์ล่าสุด ' + U.timeStr(cs.lastOk) : 'ยังไม่ได้ซิงก์') + '</b> · รอส่ง <b>' + cs.pending + '</b> รายการ' +
+            (cs.lastErr ? '<br><small class="muted">' + esc(cs.lastErr) + '</small>' : '') + ' · ในเครื่องนี้ ' + raw.patients.length + ' ผู้ป่วย, ' + raw.handovers.length + ' บันทึก</p>' +
+            '<div class="btns"><button class="btn primary" id="sync-now">ซิงก์ตอนนี้</button><button class="btn ghost" id="exp">' + icon('download') + 'Export สำรอง (.json)</button>' +
+            '<button class="btn ghost" id="reload">โหลดข้อมูลใหม่จาก Cloud</button><button class="btn ghost danger-t" id="signout">ออกจากระบบเครื่องนี้</button></div></section>'
+          : '<section class="card"><h2 class="sec-t">' + icon('download') + 'สำรอง / ย้ายข้อมูล</h2>' +
+            '<p class="hint">ข้อมูลเก็บในเครื่องนี้เท่านั้น (' + raw.patients.length + ' ผู้ป่วย, ' + raw.handovers.length + ' บันทึก, ~' + size + ' KB) มือถือกับคอมไม่ซิงค์กันเอง ใช้ Export / Import</p>' +
+            '<div class="btns"><button class="btn ghost" id="exp">' + icon('download') + 'Export (.json)</button>' +
+            '<label class="btn ghost">' + icon('upload') + 'Import (.json)<input type="file" id="imp" accept=".json,application/json" hidden></label>' +
+            '<button class="btn ghost" id="demo">โหลดข้อมูลตัวอย่าง (สมมติ)</button><button class="btn danger" id="wipe">ลบข้อมูลทั้งหมด</button></div>' +
+            '<p class="hint">ข้อมูลตัวอย่างมีป้าย "ข้อมูลสมมติ" กดอีกครั้งเพื่อลบชุดเดิมแล้วสร้างใหม่ ข้อมูลผู้ป่วยจริงไม่ถูกแตะ</p></section>') +
         '<section class="card"><h2 class="sec-t">' + icon('alert') + 'ต้องให้ผู้เชี่ยวชาญตรวจสอบก่อนใช้งานจริง</h2><ol class="review">' + ICU.REVIEW_ITEMS.map(x => '<li>' + esc(x) + '</li>').join('') + '</ol>' +
         '<p class="hint">ระบบนี้ช่วยบันทึกและตรวจความครบถ้วนเท่านั้น ไม่สร้างคำแนะนำการรักษาหรือการตัดสินใจทางคลินิก</p></section>' +
         '<section class="card"><h2 class="sec-t">' + icon('history') + 'ประวัติการแก้ไขข้อมูล (Audit log) ล่าสุด</h2><div class="table-wrap"><table class="tbl"><thead><tr><th>เวลา</th><th>ผู้ใช้</th><th>การกระทำ</th><th>รายการ</th></tr></thead><tbody>' + auditRows + '</tbody></table></div></section>' +
@@ -503,6 +514,20 @@
           a.download = 'icu-handover-' + U.dateStr() + '.json';
           document.body.appendChild(a); a.click(); a.remove();
         };
+        if (cloud) {
+          el.querySelector('#sync-now').onclick = async () => { await ICU.cloud.run(); const s = ICU.cloud.status(); UI.toast(s.lastErr ? 'ซิงก์ไม่สำเร็จ: ' + s.lastErr : 'ซิงก์แล้ว', s.lastErr ? 'error' : 'ok'); render(); };
+          el.querySelector('#reload').onclick = async () => {
+            const n = S.pendingCount();
+            if (!await UI.confirm('โหลดข้อมูลใหม่จาก Cloud', n ? 'มี ' + n + ' รายการที่ยังไม่ได้ส่งขึ้น Cloud จะหายไป! กด "ซิงก์ตอนนี้" ก่อน หรือยืนยันเพื่อลบสำเนาในเครื่องแล้วโหลดใหม่' : 'ลบสำเนาในเครื่องนี้แล้วดาวน์โหลดข้อมูลวอร์ดใหม่ทั้งหมด', 'โหลดใหม่', !!n)) return;
+            await ICU.cloud.reload(); UI.toast('โหลดข้อมูลใหม่แล้ว', 'ok');
+          };
+          el.querySelector('#signout').onclick = async () => {
+            const n = S.pendingCount();
+            if (!await UI.confirm('ออกจากระบบ', (n ? 'ยังมี ' + n + ' รายการที่ยังไม่ได้ส่งขึ้น Cloud (จะส่งเมื่อเข้าระบบอีกครั้ง) · ' : '') + 'ต้องใส่รหัสวอร์ดใหม่เมื่อจะใช้เครื่องนี้', 'ออกจากระบบ', true)) return;
+            ICU.cloud.signOut();
+          };
+          return;
+        }
         el.querySelector('#imp').onchange = async e => {
           const file = e.target.files[0];
           if (!file) return;
@@ -527,6 +552,7 @@
 
   /* ---------------------------------------------------------------- start */
   window.addEventListener('hashchange', render);
+  document.getElementById('sync-chip').onclick = () => { ICU.cloud.run(); const s = ICU.cloud.status(); if (s.lastErr) UI.toast('ซิงก์: ' + s.lastErr, 'error'); };
   tick(); setInterval(tick, 30000);
   render();
   if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {

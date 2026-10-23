@@ -165,6 +165,15 @@ ICU.REVIEW_ITEMS = [
   'ข้อความเตือน DOPE ต้องอ้างอิงแนวทางฉุกเฉินของโรงพยาบาล'
 ];
 
+/* Shared ward database (Supabase). The publishable key is meant to be public - access is controlled by
+   Row Level Security + the ward login. Leave url empty to run without cloud (data only on this device). */
+ICU.CLOUD = {
+  url: 'https://fifduhwrmkvdpdjxlewq.supabase.co',
+  key: 'sb_publishable_2HXAhXF3gLyMw5xK3aMSDA_g9kWT0ik',
+  email: 'ward@icu-handover.app',
+  pollSeconds: 15
+};
+
 ICU.DEFAULT_SETTINGS = {
   userName: 'Nanita',
   role: 'nurse',

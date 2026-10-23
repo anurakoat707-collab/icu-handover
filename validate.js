@@ -16,7 +16,6 @@
     const R = { info: { missing: [] }, fancas: { missing: [] }, fasthugbid: { missing: [] }, dope: { missing: [] }, care: { missing: [] } };
 
     if (!p || !p.name) R.info.missing.push('ชื่อผู้ป่วย');
-    if (!p || !p.hn) R.info.missing.push('HN');
     if (!p || !p.bed) R.info.missing.push('ห้อง / เตียง');
     if (!h.date) R.info.missing.push('วันที่');
     if (!h.shift) R.info.missing.push('เวร');
@@ -77,7 +76,7 @@
     const L = [];
     const sh = U.shift(h.shift);
     L.push('สรุปการส่งเวร ICU (ICU Handover Summary)');
-    L.push(p.name + ' | HN ' + p.hn + (p.an ? ' | AN ' + p.an : '') + ' | ' + U.sexLabel(p.sex) + ' ' + (p.age || '-') + ' ปี' + (p.weight ? ' | ' + p.weight + ' กก.' : ''));
+    L.push(p.name + (p.hn ? ' | HN ' + p.hn : '') + (p.an ? ' | AN ' + p.an : '') + ' | ' + U.sexLabel(p.sex) + ' ' + (p.age || '-') + ' ปี' + (p.weight ? ' | ' + p.weight + ' กก.' : ''));
     L.push('เตียง ' + (p.bed || '-') + ' | เวร' + sh.label + ' ' + U.thaiDate(h.date) + ' ' + (h.time || '') + ' น.');
     L.push('ผู้ส่งเวร: ' + (h.giver || '-') + ' | ผู้รับเวร: ' + (h.receiver || '-') + ' | สถานะ: ' + ICU.HANDOVER_STATUS[h.status].label);
     if (p.isDemo || h.isDemo) L.push('*** ข้อมูลสมมติ (DEMO) ***');

@@ -1,10 +1,10 @@
 /* Offline cache: the app works without internet after the first visit.
    Bump VERSION whenever a file changes so phones pick up the new version. */
-const VERSION = 'icu-handover-v5';
+const VERSION = 'icu-handover-v6';
 const FILES = [
   './', './index.html', './manifest.webmanifest',
   './style.css', './print.css',
-  './config.js', './demo-data.js', './store.js', './validate.js', './print.js', './editor.js', './app.js',
+  './config.js', './demo-data.js', './store.js', './cloud.js', './validate.js', './print.js', './editor.js', './app.js',
   './icon-192.png', './icon-512.png', './icon-maskable-512.png', './apple-touch-icon.png'
 ];
 
