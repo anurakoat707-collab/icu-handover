@@ -187,6 +187,14 @@
       await api('DELETE', 'handovers?id=eq.' + enc(sy.dels[0]));
       sy.dels.shift();
     }
+    /* audit rows deleted on this phone */
+    sy.auditDels = sy.auditDels || [];
+    while (sy.auditDels.length) {
+      const batch = sy.auditDels.slice(0, 80);
+      await api('DELETE', 'audit?id=in.(' + batch.map(enc).join(',') + ')');
+      sy.auditDels = sy.auditDels.slice(batch.length);
+      auditGone = true;
+    }
     if (sy.auditOut.length) {
       const ids = sy.auditOut.slice(0, 200), set = new Set(ids);
       const rows = S.raw().audit.filter(a => set.has(a.id)).map(a => ({
@@ -221,7 +229,18 @@
     const audits = await api('GET', 'audit?select=*&at=gte.' + enc(aSince) + '&order=at.asc&limit=1000');
     if (S.mergeAudit(audits)) changedRemote = true;
     if (audits.length && (!sy.lastAuditPull || audits[audits.length - 1].at > sy.lastAuditPull)) sy.lastAuditPull = audits[audits.length - 1].at;
+    /* audit rows deleted on other phones: compare ids at start and about every 5 minutes */
+    if (!auditChecked || pulls % 20 === 0) {
+      const local = S.raw().audit;
+      if (local.length) {
+        const oldest = local.reduce((m, a) => (String(a.at) < m ? String(a.at) : m), String(local[0].at));
+        const sids = (await api('GET', 'audit?select=id&at=gte.' + enc(oldest) + '&limit=10000')).map(r => r.id);
+        if (S.dropAudit(sids, oldest)) changedRemote = true;
+      }
+      auditChecked = true;
+    }
   }
+  let auditChecked = false, auditGone = false;
 
   /* ------------------------------------------------------------------ loop */
   async function run() {

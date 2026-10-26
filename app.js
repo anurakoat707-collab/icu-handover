@@ -647,12 +647,13 @@
     const st = S.settings();
     const raw = S.raw();
     const actions = { create: 'สร้าง', update: 'แก้ไข', status: 'เปลี่ยนสถานะ', submit: 'ยืนยันส่งเวร', amend: 'สร้างบันทึกแก้ไข', archive: 'เก็บถาวร', discard: 'ลบฉบับร่าง', import: 'นำเข้า', demo: 'ข้อมูลสมมติ',
-      trash: 'ย้ายไปถังขยะ', restore: 'กู้คืน', purge: 'ลบถาวร' };
+      trash: 'ย้ายไปถังขยะ', restore: 'กู้คืน', purge: 'ลบถาวร', audit_delete: 'ลบประวัติ' };
+    const auditTotal = S.raw().audit.length;
     const auditRows = S.auditAll().slice(0, 80).map(a => {
       let target = '';
       if (a.entity === 'patient') target = (S.patient(a.entityId) || {}).name || 'ผู้ป่วย';
       else if (a.entity === 'handover') { const h = S.handover(a.entityId); const p = h && S.patient(h.patientId); target = h ? (p ? p.name : '') + ' เวร' + U.shift(h.shift).label + ' ' + U.thaiDate(h.date) : 'บันทึกส่งเวร'; }
-      return '<tr><td>' + U.thaiDateTime(a.at) + '</td><td>' + esc(a.by) + '</td><td>' + esc(actions[a.action] || a.action) + '</td><td>' + esc(target) +
+      return '<tr><td class="tsel-td"><input type="checkbox" data-aud="' + esc(a.id) + '" aria-label="เลือก"></td><td>' + U.thaiDateTime(a.at) + '</td><td>' + esc(a.by) + '</td><td>' + esc(actions[a.action] || a.action) + '</td><td>' + esc(target) +
         (a.changes.length ? '<br><small class="muted">' + esc(a.changes.join(', ')) + '</small>' : '') + (a.note ? '<br><small class="muted">' + esc(a.note) + '</small>' : '') + '</td></tr>';
     }).join('');
     const size = Math.round((localStorage.getItem('icuhandover.v1') || '').length / 1024);
@@ -704,7 +705,12 @@
         ' · ตรวจวันละครั้ง (ล่าสุด ' + esc(st.lastClean ? U.thaiDate(st.lastClean) : '-') + ')</p></section>' +
         '<section class="card"><h2 class="sec-t">' + icon('alert') + 'ต้องให้ผู้เชี่ยวชาญตรวจสอบก่อนใช้งานจริง</h2><ol class="review">' + ICU.REVIEW_ITEMS.map(x => '<li>' + esc(x) + '</li>').join('') + '</ol>' +
         '<p class="hint">ระบบนี้ช่วยบันทึกและตรวจความครบถ้วนเท่านั้น ไม่สร้างคำแนะนำการรักษาหรือการตัดสินใจทางคลินิก</p></section>' +
-        '<section class="card"><h2 class="sec-t">' + icon('history') + 'ประวัติการแก้ไขข้อมูล (Audit log) ล่าสุด</h2><div class="table-wrap"><table class="tbl"><thead><tr><th>เวลา</th><th>ผู้ใช้</th><th>การกระทำ</th><th>รายการ</th></tr></thead><tbody>' + auditRows + '</tbody></table></div></section>' +
+        '<section class="card"><h2 class="sec-t">' + icon('history') + 'ประวัติการแก้ไขข้อมูล (Audit log)</h2>' +
+        '<div class="row-between audit-bar"><span class="muted">แสดงล่าสุด ' + Math.min(80, auditTotal) + ' จาก ' + auditTotal + ' รายการ</span><div class="btns">' +
+        '<button class="btn ghost sm danger-t" id="aud-del" disabled>' + icon('trash') + 'ลบที่เลือก</button>' +
+        '<button class="btn danger sm" id="aud-clear"' + (auditTotal ? '' : ' disabled') + '>' + icon('trash') + 'ล้างประวัติทั้งหมด</button></div></div>' +
+        '<div class="table-wrap"><table class="tbl"><thead><tr><th class="tsel-td"><input type="checkbox" id="aud-all" aria-label="เลือกทั้งหมด"></th><th>เวลา</th><th>ผู้ใช้</th><th>การกระทำ</th><th>รายการ</th></tr></thead><tbody>' + auditRows + '</tbody></table></div>' +
+        '<p class="hint">ลบแล้วกู้คืนไม่ได้ และมีผลกับทุกเครื่องในวอร์ด · ระบบจะบันทึกไว้ 1 รายการว่าใครลบประวัติกี่รายการ</p></section>' +
         '<section class="card"><h2 class="sec-t">' + icon('shield') + 'ติดตั้งเป็นแอป</h2><p class="hint">iPhone / iPad (Safari): ปุ่มแชร์ → "เพิ่มไปยังหน้าจอโฮม" · Android (Chrome): เมนู ⋮ → "ติดตั้งแอป" · ICU Handover v' + ICU.APP_VERSION + '</p></section>',
       mount(el) {
         el.querySelector('#set-user').onsubmit = e => { e.preventDefault(); S.saveSettings(Object.fromEntries(new FormData(e.target))); UI.toast('บันทึกแล้ว', 'ok'); render(); };
@@ -716,6 +722,34 @@
           a.download = 'icu-handover-' + U.dateStr() + '.json';
           document.body.appendChild(a); a.click(); a.remove();
         };
+        /* audit log: tick rows / all shown, delete selected, or clear everything */
+        const audBoxes = () => Array.from(el.querySelectorAll('[data-aud]'));
+        const audAll = el.querySelector('#aud-all'), audDel = el.querySelector('#aud-del');
+        const audPaint = () => {
+          const n = audBoxes().filter(b => b.checked).length;
+          audDel.disabled = !n; audDel.lastChild.textContent = 'ลบที่เลือก' + (n ? ' (' + n + ')' : '');
+          audAll.checked = n > 0 && n === audBoxes().length; audAll.indeterminate = n > 0 && n < audBoxes().length;
+        };
+        audAll.onchange = () => { audBoxes().forEach(b => { b.checked = audAll.checked; }); audPaint(); };
+        audBoxes().forEach(b => { b.onchange = audPaint; });
+        const audConfirm = n => UI.dialog({
+          title: 'ลบประวัติการแก้ไข ' + n + ' รายการ', ok: 'ลบ', danger: true,
+          html: '<p>ประวัติที่ลบจะหายจาก<b>ทุกเครื่องในวอร์ด</b> และ<b>กู้คืนไม่ได้</b> (ระบบจะเก็บ 1 รายการว่าใครลบ)</p>' +
+            '<label class="fld">พิมพ์คำว่า ลบ เพื่อยืนยัน<input name="c" required autocomplete="off"></label>',
+          validate: f => f.get('c').trim() === 'ลบ' ? '' : 'พิมพ์คำว่า ลบ ให้ถูกต้อง'
+        });
+        audDel.onclick = async () => {
+          const ids = audBoxes().filter(b => b.checked).map(b => b.dataset.aud);
+          if (!ids.length || !await audConfirm(ids.length)) return;
+          UI.toast('ลบประวัติแล้ว ' + S.deleteAudit(ids) + ' รายการ', 'ok'); render();
+        };
+        el.querySelector('#aud-clear').onclick = async () => {
+          const ids = S.raw().audit.map(a => a.id);
+          if (!ids.length || !await audConfirm(ids.length)) return;
+          UI.toast('ล้างประวัติแล้ว ' + S.deleteAudit(ids) + ' รายการ', 'ok'); render();
+        };
+        audPaint();
+
         el.querySelector('#clear-all').onclick = async () => {
           const np = S.patients({ includeArchived: true }).length, nh = S.handovers().length;
           if (!np && !nh) return UI.toast('ไม่มีข้อมูลให้เคลียร์');

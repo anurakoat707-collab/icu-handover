@@ -426,6 +426,9 @@ body.locked #view { max-width: none; padding: 0; }
 .tsel { display: grid; place-items: center; width: 34px; height: 34px; cursor: pointer; }
 .tsel input { width: 22px; height: 22px; accent-color: var(--red); }
 .shift-tag.t-pt { background: #FCE7F3; color: #9D174D; }
+.tsel-td { width: 34px; }
+.tsel-td input { width: 20px; height: 20px; accent-color: var(--red); }
+.audit-bar { margin-bottom: 8px; }
 .icon-btn.danger-i:hover { background: var(--red-l) !important; color: var(--red) !important; }
 :root[data-theme=dark] .shift-tag.t-pt { background: #3A1630; color: #F9A8D4; }
 

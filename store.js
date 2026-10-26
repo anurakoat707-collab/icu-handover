@@ -55,7 +55,7 @@
   let db = null;
   function fresh() {
     return { version: 1, patients: [], handovers: [], audit: [], settings: Object.assign({}, ICU.DEFAULT_SETTINGS), demoSeeded: false,
-      sync: { dirty: {}, ver: {}, base: {}, auditOut: [], dels: [], lastPull: '', lastAuditPull: '' } };
+      sync: { dirty: {}, ver: {}, base: {}, auditOut: [], auditDels: [], dels: [], lastPull: '', lastAuditPull: '' } };
   }
   function load() {
     try { db = JSON.parse(localStorage.getItem(KEY)) || null; } catch (e) { db = null; }
@@ -359,7 +359,7 @@
 
     /* ---------------------------------------------------- cloud sync helpers */
     syncState: () => db.sync,
-    pendingCount: () => Object.keys(db.sync.dirty).length + db.sync.auditOut.length + db.sync.dels.length,
+    pendingCount: () => Object.keys(db.sync.dirty).length + db.sync.auditOut.length + db.sync.dels.length + (db.sync.auditDels || []).length,
     record(kind, id) { return (kind === 'p' ? db.patients : db.handovers).find(x => x.id === id) || null; },
     /* a row from the server: replaces the local copy unless this device has unsent changes; returns true when applied */
     applyRemote(kind, row, force) {
@@ -413,6 +413,27 @@
 
     auditOf: id => db.audit.filter(a => a.entityId === id).reverse(),
     auditAll: () => db.audit.slice().reverse(),
+    /* delete audit entries (here and, with the cloud, on the server); one entry records how many were deleted */
+    deleteAudit(ids) {
+      const set = new Set(ids);
+      const before = db.audit.length;
+      db.audit = db.audit.filter(a => !set.has(a.id));
+      const unsent = new Set(db.sync.auditOut);
+      db.sync.auditOut = db.sync.auditOut.filter(id => !set.has(id));
+      if (ICU.cloud && ICU.cloud.enabled()) ids.forEach(id => { if (!unsent.has(id) && !db.sync.auditDels.includes(id)) db.sync.auditDels.push(id); });
+      const n = before - db.audit.length;
+      if (n) audit('system', '-', 'audit_delete', [], 'ลบประวัติการแก้ไข ' + n + ' รายการ');
+      if (ICU.cloud) ICU.cloud.schedule();
+      save();
+      return n;
+    },
+    /* the server no longer has these audit rows (deleted on another phone) - only rows written since `since` are checked */
+    dropAudit(serverIds, since) {
+      const keep = new Set(serverIds), out = new Set(db.sync.auditOut);
+      const before = db.audit.length;
+      db.audit = db.audit.filter(a => keep.has(a.id) || out.has(a.id) || String(a.at) < since);
+      return before - db.audit.length;
+    },
 
     /* backup */
     exportJSON() { return JSON.stringify(Object.assign({ app: 'icu-handover', exportedAt: U.now() }, db), null, 1); },

@@ -1,6 +1,6 @@
 /* Offline cache: the app works without internet after the first visit.
    Bump VERSION whenever a file changes so phones pick up the new version. */
-const VERSION = 'icu-handover-v10';
+const VERSION = 'icu-handover-v11';
 const FILES = [
   './', './index.html', './manifest.webmanifest',
   './style.css', './print.css',
