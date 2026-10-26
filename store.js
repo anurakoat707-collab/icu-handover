@@ -45,7 +45,7 @@
     return {
       fancas, fasthugbid: fh,
       dope: { onVentilator: null, items: dopeItems, summary: '' },
-      care: { reason: '', monitoring: {}, monitoringValues: {}, monitoringNote: '', plan: {}, planValues: {}, pendingTasks: '', nextShiftNote: '' },
+      care: { reason: '', monitoring: {}, monitoringValues: {}, monitoringNote: '', plan: {}, planValues: {}, pendingTasks: '', nextShiftNote: '', tasks: [] },
       headNurse: { name: '', position: '', date: '', time: '' }
     };
   }
@@ -166,6 +166,8 @@
         h.copiedFrom = src.id;
         h.fancas = U.clone(src.fancas);
         h.care = U.clone(src.care);
+        /* open tasks go to the next shift, finished ones stay with the shift that did them */
+        h.care.tasks = (src.care.tasks || []).filter(t => !t.done).map(t => Object.assign({}, t, { fromShift: src.id }));
         h.dope.onVentilator = src.dope.onVentilator;
         ICU.FASTHUGBID.forEach(f => { h.fasthugbid[f.id].note = (src.fasthugbid[f.id] || {}).note || ''; });
       }
@@ -265,6 +267,39 @@
       save();
       return true;
     },
+    openTasks: h => ((h && h.care && h.care.tasks) || []).filter(t => !t.done),
+    /* patients of a shift (still in the ICU, or with a record in that shift), sorted by bed */
+    shiftRows(date, shift) {
+      return S.patients().filter(p => p.status === 'active' || S.handoverFor(p.id, date, shift))
+        .sort((a, b) => String(a.bed).localeCompare(String(b.bed), 'th', { numeric: true }))
+        .map(p => ({ p, h: S.handoverFor(p.id, date, shift) }));
+    },
+
+    /* PDPA clean-up (ICU.RETENTION): patients who left the ICU long ago -> archived + their records to the trash;
+       optional: records that stayed in the trash too long -> deleted for good. Returns the number of changes. */
+    autoClean(now) {
+      const R = ICU.RETENTION || {};
+      now = now || Date.now();
+      const day = 86400000;
+      let n = 0;
+      if (R.leftDays > 0) {
+        db.patients.filter(p => !p.archivedAt && p.status !== 'active').forEach(p => {
+          const last = [p.updatedAt].concat(db.handovers.filter(h => h.patientId === p.id).map(h => h.updatedAt)).filter(Boolean).sort().pop();
+          if (!last || now - Date.parse(last) < R.leftDays * day) return;
+          S.handoversOf(p.id).forEach(h => { if (S.trashHandover(h.id, 'ลบอัตโนมัติ: ผู้ป่วยออกจาก ICU เกิน ' + R.leftDays + ' วัน')) n++; });
+          p.archivedAt = U.now(); p.archivedBy = 'ระบบ (อัตโนมัติ)';
+          audit('patient', p.id, 'archive', [], 'เก็บถาวรอัตโนมัติ: ออกจาก ICU เกิน ' + R.leftDays + ' วัน');
+          markDirty('p', p.id);
+          n++;
+        });
+      }
+      if (R.trashDays > 0) {
+        S.trash().filter(h => now - Date.parse(h.deletedAt) >= R.trashDays * day).forEach(h => { if (S.purgeHandover(h.id)) n++; });
+      }
+      if (n) save();
+      return n;
+    },
+
     removeLocal(kind, id) {
       const k = keyOf(kind, id);
       if (kind === 'h') db.handovers = db.handovers.filter(x => x.id !== id);
@@ -315,7 +350,8 @@
       let n = 0;
       rows.forEach(r => {
         if (have.has(r.id)) return;
-        db.audit.push({ id: r.id, entity: r.entity, entityId: r.entity_id, action: r.action, by: r.by_name, at: r.at, changes: r.changes || [], note: r.note || '' });
+        const acc = r.user_email && ICU.CLOUD && r.user_email !== ICU.CLOUD.email ? ' (' + String(r.user_email).split('@')[0] + ')' : '';
+        db.audit.push({ id: r.id, entity: r.entity, entityId: r.entity_id, action: r.action, by: (r.by_name || '') + acc, at: r.at, changes: r.changes || [], note: r.note || '' });
         n++;
       });
       if (n) db.audit.sort((a, b) => String(a.at).localeCompare(String(b.at)));

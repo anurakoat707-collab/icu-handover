@@ -77,6 +77,19 @@
       seg('dope.onVentilator', d.onVentilator == null ? '' : d.onVentilator ? 'yes' : 'no', [{ id: 'yes', label: 'ใช้' }, { id: 'no', label: 'ไม่ใช้' }]) + '</div>' + body;
   }
 
+  /* tasks that travel to the next shift until somebody ticks them */
+  function taskBox(tasks) {
+    return '<div class="tasks"><div class="tasks-h"><b>งานที่ต้องติดตาม</b><small class="muted">ที่ยังไม่ติ๊กจะส่งต่อไปเวรถัดไปอัตโนมัติ</small></div>' +
+      (tasks.length ? '<ul class="task-list">' + tasks.map(t =>
+        '<li class="' + (t.done ? 'done' : '') + '"><label class="ck"><input type="checkbox" data-task-done="' + esc(t.id) + '"' + (t.done ? ' checked' : '') + '>' +
+        '<span>' + (t.due ? '<b class="task-due">' + esc(t.due) + '</b> ' : '') + esc(t.text) +
+        '<small class="muted">' + (t.done ? ' · เสร็จโดย ' + esc(t.doneBy || '-') + ' ' + esc(U.timeStr(new Date(t.doneAt))) : t.fromShift ? ' · ต่อจากเวรก่อน' : '') + '</small></span></label>' +
+        '<button type="button" class="icon-btn task-del" data-task-del="' + esc(t.id) + '" aria-label="ลบงานนี้">×</button></li>').join('') + '</ul>'
+        : '<p class="muted task-empty">ยังไม่มีงาน</p>') +
+      '<div class="task-add"><input type="text" id="task-text" placeholder="เพิ่มงาน เช่น รอผล Lab / ให้ยา / นัดหัตถการ" maxlength="120">' +
+      '<input type="time" id="task-due" aria-label="เวลา (ถ้ามี)"><button type="button" class="btn primary sm" id="task-add">เพิ่ม</button></div></div>';
+  }
+
   function stepCare(h) {
     const c = h.care, hn = h.headNurse;
     return '<div class="step-head"><h2>แผนการดูแลต่อเนื่อง <span>ICU Admission &amp; Care Plan</span></h2></div>' +
@@ -87,7 +100,8 @@
       '<label class="fld">รายละเอียดเพิ่มเติม' + area('care.monitoringNote', c.monitoringNote, 'เป้าหมาย / ค่าที่ต้องติดตาม...') + '</label></section>' +
       '<section class="card"><h3 class="sub-t"><span class="num">C</span>แผนการดูแล / การติดตามต่อ <small>(Ongoing Care Plan)</small></h3>' +
       '<div class="ck-cols">' + checklist(ICU.PLAN, 'care.plan', c.plan, c.planValues) + '</div>' +
-      '<label class="fld">งานที่ยังไม่เสร็จ / สิ่งที่ต้องติดตาม' + area('care.pendingTasks', c.pendingTasks, 'เช่น รอผล Lab, นัดทำหัตถการ...') + '</label>' +
+      taskBox(c.tasks || []) +
+      '<label class="fld">หมายเหตุงานค้างเพิ่มเติม' + area('care.pendingTasks', c.pendingTasks, 'ข้อความอิสระ (ถ้ามี)') + '</label>' +
       '<label class="fld">ข้อมูลสำคัญสำหรับเวรถัดไป' + area('care.nextShiftNote', c.nextShiftNote, 'สิ่งที่เวรถัดไปต้องรู้...') + '</label></section>' +
       '<details class="card"><summary class="sub-t">หัวหน้าเวร <small>(เฉพาะกรณีย้ายออกจากหอผู้ป่วยวิกฤต)</small></summary><div class="grid g4">' +
       '<label class="fld">ชื่อ' + txt('headNurse.name', hn.name) + '</label><label class="fld">ตำแหน่ง' + txt('headNurse.position', hn.position) + '</label>' +
@@ -137,7 +151,8 @@
       '<section class="card"><h3 class="sub-t">ดำเนินการ</h3><div class="btns col">' + actions + '</div></section>' +
       '<section class="card"><h3 class="sub-t">ความคืบหน้า</h3>' + ICU.progressGrid(v) + '</section></div>' +
       '<div><section class="card"><div class="row-between"><h3 class="sub-t">สรุปสำหรับส่งต่อ</h3><div class="btns">' +
-      '<button class="btn ghost sm" data-act="copy">' + ICU.ui.icon('copy') + 'คัดลอก</button>' +
+      '<button class="btn ghost sm" data-act="line">' + ICU.ui.icon('share') + 'ส่ง LINE</button>' +
+      '<button class="btn ghost sm" data-act="copy">' + ICU.ui.icon('copy') + 'คัดลอกฉบับเต็ม</button>' +
       '<a class="btn primary sm" href="#/print/' + h.id + '">' + ICU.ui.icon('print') + 'พิมพ์ฟอร์ม A4</a></div></div>' +
       '<pre class="sum-text">' + esc(ICU.summaryText(h, p)) + '</pre></section>' +
       '<details class="card"><summary class="sub-t">ประวัติการแก้ไขบันทึกนี้</summary><ul class="audit">' + log + '</ul></details></div></div>';
@@ -273,10 +288,38 @@
         const sd = el.querySelector('#save-draft');
         if (sd) sd.onclick = () => { flush(); ICU.ui.toast('บันทึกฉบับร่างแล้ว', 'ok'); };
 
+        /* tasks */
+        const me = () => S.settings().userName || 'ไม่ระบุชื่อ';
+        const taskChange = fn => {
+          flush();
+          const r = S.updateHandover(h.id, x => { x.care.tasks = (x.care.tasks || []).map(t => Object.assign({}, t)); fn(x.care.tasks, x); });
+          if (r === false) return ICU.ui.toast('บันทึกนี้ล็อกแล้ว แก้ไขไม่ได้', 'error');
+          ICU._lastEditor = key; ICU.render();
+        };
+        const addBtn = el.querySelector('#task-add');
+        if (addBtn) {
+          const tx = el.querySelector('#task-text'), due = el.querySelector('#task-due');
+          const add = () => {
+            const text = tx.value.trim();
+            if (!text) return tx.focus();
+            taskChange(ts => ts.push({ id: U.uid('t'), text, due: due.value || '', done: false, createdBy: me(), createdAt: U.now() }));
+            const n = document.getElementById('task-text'); if (n) n.focus();
+          };
+          addBtn.onclick = add;
+          tx.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); add(); } };
+        }
+        el.querySelectorAll('[data-task-done]').forEach(c => {
+          c.onchange = () => taskChange(ts => { const t = ts.find(x => x.id === c.dataset.taskDone); if (t) Object.assign(t, c.checked ? { done: true, doneBy: me(), doneAt: U.now() } : { done: false, doneBy: '', doneAt: '' }); });
+        });
+        el.querySelectorAll('[data-task-del]').forEach(b => {
+          b.onclick = () => taskChange(ts => { const i = ts.findIndex(x => x.id === b.dataset.taskDel); if (i >= 0) ts.splice(i, 1); });
+        });
+
         el.querySelectorAll('[data-act]').forEach(b => { b.onclick = () => act(b.dataset.act); });
         async function act(a) {
           const cur = S.handover(h.id);
           if (a === 'copy') return ICU.ui.copy(ICU.summaryText(cur, p));
+          if (a === 'line') return ICU.ui.share(ICU.lineText(cur, p), 'ส่งเวร ' + (p.bed || ''));
           if (a === 'review') {
             if (!ICU.validate(cur, p).complete) return ICU.ui.toast('ข้อมูลยังไม่ครบ', 'error');
             S.setStatus(h.id, 'ready_for_review'); ICU.ui.toast('ส่งตรวจสอบแล้ว (Ready for Review)', 'ok'); return ICU.render();

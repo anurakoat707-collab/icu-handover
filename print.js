@@ -56,7 +56,7 @@
         '<small>' + x.th + '</small>' + cb(r.result === 'found') + '</div>';
     }).join('');
 
-    const extra = [c.pendingTasks && 'งานค้าง / ติดตาม: ' + c.pendingTasks, c.nextShiftNote && 'เวรถัดไป: ' + c.nextShiftNote, c.monitoringNote && 'เฝ้าระวัง: ' + c.monitoringNote].filter(Boolean);
+    const extra = (c.tasks || []).map(t => (t.done ? '☑ ' : '☐ ') + (t.due ? t.due + ' ' : '') + t.text).concat([c.pendingTasks && 'งานค้าง / ติดตาม: ' + c.pendingTasks, c.nextShiftNote && 'เวรถัดไป: ' + c.nextShiftNote, c.monitoringNote && 'เฝ้าระวัง: ' + c.monitoringNote]).filter(Boolean);
 
     return '<div class="a4' + ((p.isDemo || h.isDemo) ? ' is-demo' : '') + '">' +
       ((p.isDemo || h.isDemo) ? '<div class="pp-wm">ข้อมูลสมมติ · DEMO</div>' : '') +
@@ -102,7 +102,62 @@
       '</footer></div>';
   };
 
-  ICU.views.print = function (params) {
+  /* one A4 summary of every bed of a shift */
+  function shiftSummaryHTML(date, shift, rows) {
+    const st = S.settings();
+    const cell = a => a.length ? a.map(x => '<div>' + esc(x) + '</div>').join('') : '<span class="pp-dash">-</span>';
+    return '<div class="a4 sum-page"><header class="pp-head sum-head"><div class="pp-logo"><span>ICU</span></div>' +
+      '<div class="pp-hosp"><b>' + esc(st.hospital) + '</b><small>' + esc(st.ward) + '</small></div>' +
+      '<div class="pp-title"><b>สรุปส่งเวรทุกเตียง</b><span>เวร' + esc(U.shift(shift).label) + ' ' + esc(U.thaiDate(date)) + ' (' + esc(U.shift(shift).time) + ')</span></div>' +
+      '<div class="pp-when"><div>ผู้ป่วย ' + rows.length + ' ราย</div><div>ส่งเวรแล้ว ' + rows.filter(r => r.h && r.h.status === 'handed_over').length + ' ราย</div></div></header>' +
+      '<table class="sum-tbl"><thead><tr><th>เตียง</th><th>ผู้ป่วย</th><th>สถานะ</th><th>ปัญหาสำคัญ</th><th>เฝ้าระวัง</th><th>งานค้าง</th><th>ส่ง → รับ</th></tr></thead><tbody>' +
+      rows.map(r => {
+        const h = r.h, p = r.p;
+        if (!h) return '<tr><td class="b">' + esc(p.bed || '-') + '</td><td><b>' + esc(p.name) + '</b><small>' + esc(p.diagnosis || '') + '</small></td><td>ยังไม่เริ่ม</td><td colspan="4" class="pp-dash">ยังไม่มีบันทึกเวรนี้</td></tr>';
+        const tasks = ICU.openTasksOf(h).map(t => (t.due ? t.due + ' ' : '') + t.text).concat(h.care.pendingTasks ? [h.care.pendingTasks] : []);
+        return '<tr><td class="b">' + esc(p.bed || '-') + '</td><td><b>' + esc(p.name) + '</b><small>' + esc((p.age || '-') + ' ปี ' + U.sexLabel(p.sex)) + '</small><small>' + esc(h.care.reason || p.diagnosis || '') + '</small></td>' +
+          '<td>' + esc(ICU.HANDOVER_STATUS[h.status].th) + '</td><td>' + cell(ICU.keyPoints(h)) + '</td>' +
+          '<td>' + cell(ICU.itemText(ICU.MONITORING, h.care.monitoring, h.care.monitoringValues)) + '</td><td>' + cell(tasks) + '</td>' +
+          '<td>' + esc(h.giver || '-') + '<br>→ ' + esc(h.receiver || '-') + '</td></tr>';
+      }).join('') + '</tbody></table>' +
+      '<div class="pp-disc">พิมพ์จากระบบ ICU Handover ' + U.thaiDateTime(U.now()) + ' · ใช้ประกอบการส่งเวรเท่านั้น ไม่ใช่คำแนะนำการรักษา</div></div>';
+  }
+
+  function fitSheets(el) {
+    const fit = () => el.querySelectorAll('.a4-wrap').forEach(wrap => {
+      const sheet = wrap.querySelector('.a4');
+      sheet.style.transform = '';
+      const s = Math.min(1, wrap.clientWidth / sheet.offsetWidth);
+      sheet.style.transform = s < 1 ? 'scale(' + s + ')' : '';
+      wrap.style.height = s < 1 ? (sheet.offsetHeight * s) + 'px' : '';
+    });
+    fit();
+    window.addEventListener('resize', fit);
+    ICU.beforeLeave = () => window.removeEventListener('resize', fit);
+    el.querySelector('#do-print').onclick = () => window.print();
+  }
+
+  function shiftPrint(q) {
+    const date = q.date || U.currentDate(), shift = q.shift || U.currentShift(), mode = q.mode === 'forms' ? 'forms' : 'summary';
+    const rows = S.shiftRows(date, shift);
+    const withH = rows.filter(r => r.h);
+    const back = '#/home?date=' + date + '&shift=' + shift;
+    const tab = (m, l) => '<a class="chip' + (m === mode ? ' on' : '') + '" href="#/print/shift?date=' + date + '&shift=' + shift + '&mode=' + m + '">' + l + '</a>';
+    const sheets = mode === 'summary'
+      ? '<div class="a4-wrap">' + shiftSummaryHTML(date, shift, rows) + '</div>'
+      : withH.map(r => '<div class="a4-wrap">' + ICU.paperHTML(r.h, r.p, false) + '</div>').join('') || '<div class="empty card">ยังไม่มีบันทึกส่งเวรในเวรนี้</div>';
+    return {
+      title: 'พิมพ์ทั้งเวร · เวร' + U.shift(shift).label + ' ' + U.thaiDate(date), nav: 'home', back,
+      html: '<div class="pp-toolbar no-print"><a class="btn ghost" href="' + back + '">' + ICU.ui.icon('back') + 'กลับ</a>' +
+        '<div class="pp-tb-info"><div class="chips">' + tab('summary', 'สรุปทุกเตียง (1 หน้า)') + tab('forms', 'แบบฟอร์มทุกเตียง (' + withH.length + ' หน้า)') + '</div>' +
+        '<small>เวร' + esc(U.shift(shift).label) + ' ' + esc(U.thaiDate(date)) + ' · กดพิมพ์ แล้วเลือก "บันทึกเป็น PDF" ได้</small></div>' +
+        '<button class="btn primary" id="do-print">' + ICU.ui.icon('print') + 'พิมพ์ / PDF</button></div>' + sheets,
+      mount: fitSheets
+    };
+  }
+
+  ICU.views.print = function (params, q) {
+    if (params[0] === 'shift') return shiftPrint(q || {});
     const blank = params[0] === 'blank';
     const h = blank ? Object.assign(ICU.emptyHandover(), { date: '', shift: '', time: '', giver: '', receiver: '', status: 'draft' }) : S.handover(params[0]);
     if (!h) return { redirect: '#/home' };
@@ -116,19 +171,7 @@
         '<small>กดพิมพ์ แล้วเลือก "Save as PDF / บันทึกเป็น PDF" ได้ · ขนาด A4 แนวตั้ง</small></div>' +
         '<button class="btn primary" id="do-print">' + ICU.ui.icon('print') + 'พิมพ์ / PDF</button></div>' +
         '<div class="a4-wrap" id="a4-wrap">' + ICU.paperHTML(h, p, blank) + '</div>',
-      mount(el) {
-        const wrap = el.querySelector('#a4-wrap'), sheet = wrap.querySelector('.a4');
-        const fit = () => {
-          sheet.style.transform = '';
-          const s = Math.min(1, wrap.clientWidth / sheet.offsetWidth);
-          sheet.style.transform = s < 1 ? 'scale(' + s + ')' : '';
-          wrap.style.height = s < 1 ? (sheet.offsetHeight * s) + 'px' : '';
-        };
-        fit();
-        window.addEventListener('resize', fit);
-        ICU.beforeLeave = () => window.removeEventListener('resize', fit);
-        el.querySelector('#do-print').onclick = () => window.print();
-      }
+      mount: fitSheets
     };
   };
 })();

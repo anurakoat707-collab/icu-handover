@@ -176,13 +176,25 @@ ICU.CLOUD = {
   email: 'ward@icu-handover.app',
   /* Supabase needs >= 6 characters: the typed ward code (upper case) + this suffix = the account password */
   passSuffix: '-icu-ward',
+  /* personal accounts: user name "malee" = Supabase user malee@icu-handover.app (own password, >= 6 characters).
+     An empty user name (or "ward") = the shared ward account above. */
+  userDomain: 'icu-handover.app',
+  realtime: true,          /* live updates over a websocket; polling stays as the fallback */
   pollSeconds: 15
 };
+
+/* PDPA: keep patient data only as long as needed (applies to the whole ward, checked once a day).
+   leftDays  = patient transferred / discharged / deceased and no change for this many days -> archived, records to trash
+   trashDays = records in the trash longer than this -> deleted for good (0 = never automatically) */
+ICU.RETENTION = { leftDays: 30, trashDays: 0 };
 
 ICU.DEFAULT_SETTINGS = {
   userName: 'Nanita',
   role: 'nurse',
   hospital: 'โรงพยาบาลมหาวิทยาลัยเทคโนโลยีสุรนารี',
   hospitalEn: 'Suranaree University of Technology Hospital',
-  ward: 'หอผู้ป่วยวิกฤต (ICU)'
+  ward: 'หอผู้ป่วยวิกฤต (ICU)',
+  theme: 'night',          /* 'light' | 'dark' | 'night' (dark 20:00-08:00) | 'system' */
+  beds: '',                /* ward beds for the bed board, comma separated (empty = only occupied beds) */
+  homeView: 'cards'        /* 'cards' | 'board' */
 };

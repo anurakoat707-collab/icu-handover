@@ -34,7 +34,9 @@
     bed: '<path d="M3 18V7M3 14h18v4M21 14v-3a3 3 0 0 0-3-3h-7v6"/><circle cx="7" cy="10.5" r="1.5"/>',
     x: '<path d="M6 6l12 12M18 6L6 18"/>',
     shield: '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/>',
-    trash: '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/>'
+    trash: '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/>',
+    share: '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/>',
+    moon: '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>'
   };
   const icon = (n, s) => '<svg class="ic" viewBox="0 0 24 24" width="' + (s || 18) + '" height="' + (s || 18) + '" aria-hidden="true">' + (IC[n] || '') + '</svg>';
 
@@ -95,6 +97,15 @@
       const done = ok => UI.toast(ok ? 'คัดลอกสรุปแล้ว' : 'คัดลอกไม่สำเร็จ', ok ? 'ok' : 'error');
       if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(() => done(true), () => done(fallback()));
       else done(fallback());
+    },
+    /* phone: share sheet (LINE, ...); computer: copy */
+    share(text, title) {
+      if (navigator.share && /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent)) {
+        navigator.share({ title: title || 'ICU Handover', text }).catch(e => { if (e && e.name !== 'AbortError') UI.copy(text); });
+      } else {
+        UI.copy(text);
+        UI.toast('คัดลอกแล้ว - วางในแชท LINE ได้เลย', 'ok');
+      }
     },
     go(hash) { if (location.hash === hash) render(); else location.hash = hash; }
   };
@@ -159,7 +170,7 @@
     back.innerHTML = icon('back', 22);
     back.onclick = () => UI.go(out.back);
     const el = document.getElementById('view');
-    el.innerHTML = out.html || '';
+    el.innerHTML = (r.name !== 'home' && r.name !== 'print' ? shiftWarn(ICU.shiftEndInfo(), false) : '') + (out.html || '');
     document.title = (out.title ? out.title + ' - ' : '') + 'ICU Handover';
     if (!out.keepScroll && !ICU._soft) window.scrollTo(0, 0);
     ICU.cloud.paintChip();
@@ -191,18 +202,36 @@
   ICU.progressGrid = progressGrid;
 
   /* ================================================================ HOME */
+  /* minutes left in the current shift + beds not handed over yet; null outside the last hour */
+  ICU.shiftEndInfo = function (now) {
+    now = now || new Date();
+    const shift = U.currentShift(now), date = U.currentDate(now);
+    const end = new Date((shift === 'morning' ? date : U.addDays(date, 1)) + 'T' + (shift === 'morning' ? '20:00' : '08:00') + ':00');
+    const mins = Math.round((end - now) / 60000);
+    if (mins > 60 || mins < 0) return null;
+    const pending = S.shiftRows(date, shift).filter(r => r.p.status === 'active' && (!r.h || r.h.status !== 'handed_over'));
+    return pending.length ? { mins, date, shift, pending } : null;
+  };
+  function shiftWarn(info, detailed) {
+    if (!info) return '';
+    return '<div class="shift-warn no-print">' + icon('alert', 18) + '<div><b>อีก ' + info.mins + ' นาทีหมดเวร' + U.shift(info.shift).label + '</b> · ยังไม่ส่งเวร ' + info.pending.length + ' เตียง' +
+      (detailed ? '<small>' + info.pending.map(r => esc((r.p.bed || '-') + ' ' + r.p.name) + ' (' + (r.h ? ICU.HANDOVER_STATUS[r.h.status].th : 'ยังไม่เริ่ม') + ')').join(' · ') + '</small>' : '') +
+      '</div>' + (detailed ? '' : '<a class="btn sm" href="#/home">ดู</a>') + '</div>';
+  }
+  ICU.shiftWarn = shiftWarn;
+
   ICU.views.home = function (p, q) {
     const date = q.date || U.currentDate(), shift = q.shift || U.currentShift();
     const slot = U.slot(date, shift);
-    const list = S.patients().filter(pt => pt.status === 'active' || S.handoverFor(pt.id, date, shift))
-      .sort((a, b) => String(a.bed).localeCompare(String(b.bed), 'th', { numeric: true }));
-    const k = { all: list.length, handed_over: 0, ready_for_review: 0, progress: 0, none: 0 };
-    const rows = list.map(pt => {
-      const h = S.handoverFor(pt.id, date, shift);
+    const k = { all: 0, handed_over: 0, ready_for_review: 0, progress: 0, none: 0 };
+    const rows = S.shiftRows(date, shift).map(({ p: pt, h }) => {
       const st = h ? h.status : 'none';
+      k.all++;
       if (st === 'handed_over' || st === 'ready_for_review') k[st]++; else if (st === 'none') k.none++; else k.progress++;
-      return { pt, h, st, v: h ? ICU.validate(h, pt) : null, prev: S.latestHandover(pt.id, slot) };
+      return { pt, h, st, v: h ? ICU.validate(h, pt) : null, prev: S.latestHandover(pt.id, slot), tasks: h ? ICU.openTasksOf(h).length : (S.latestHandover(pt.id, slot) ? ICU.openTasksOf(S.latestHandover(pt.id, slot)).length : 0) };
     });
+    const viewMode = S.settings().homeView === 'board' ? 'board' : 'cards';
+    const isNow = date === U.currentDate() && shift === U.currentShift();
     const f = q.f || 'all';
     const show = rows.filter(r => f === 'all' || (f === 'progress' ? (r.st === 'draft' || r.st === 'in_progress') : r.st === f));
     const kpi = (key, n, label, cls) => '<a class="kpi ' + cls + (f === key ? ' on' : '') + '" href="#/home?date=' + date + '&shift=' + shift + (f === key ? '' : '&f=' + key) + '"><b>' + n + '</b><span>' + label + '</span></a>';
@@ -219,22 +248,47 @@
         '<div class="pc-bed">' + icon('bed', 16) + esc(pt.bed || '-') + (pt.status !== 'active' ? ' ' + UI.pBadge(pt.status) : '') + '<span class="pc-dx">' + esc(pt.diagnosis || '') + '</span></div>' +
         (r.v ? progressGrid(r.v, true) : '<p class="muted pc-empty">' + (r.prev ? 'ล่าสุด: เวร' + U.shift(r.prev.shift).label + ' ' + U.thaiDate(r.prev.date) + ' (' + ICU.HANDOVER_STATUS[r.prev.status].label + ')' : 'ยังไม่มีบันทึกส่งเวร') + '</p>') +
         (r.v && !r.v.complete && r.st !== 'none' ? '<p class="pc-miss">' + icon('alert', 14) + 'ยังขาด ' + r.v.missing.length + ' รายการ</p>' : '') +
+        (r.tasks ? '<p class="pc-tasks">' + icon('clipboard', 14) + 'งานค้าง ' + r.tasks + ' รายการ</p>' : '') +
         '<footer><span class="muted">' + (r.h ? 'แก้ไขล่าสุด ' + esc(U.timeStr(new Date(r.h.updatedAt))) + ' · ' + esc(r.h.updatedBy) : '') + '</span><div class="btns">' + btn + '</div></footer></article>';
     }).join('');
 
+    /* bed board: the ward's beds (Settings) + every occupied bed */
+    const norm = b => String(b || '').replace(/\s+/g, '').toLowerCase();
+    const wardBeds = String(S.settings().beds || '').split(/[,\n]/).map(s => s.trim()).filter(Boolean);
+    const used = new Set();
+    const tile = (bed, r) => {
+      if (!r) return '<a class="bed-tile empty" href="#/patients/new?bed=' + encodeURIComponent(bed) + '"><b>' + esc(bed) + '</b><span>ว่าง</span><small>+ รับผู้ป่วย</small></a>';
+      return '<button class="bed-tile st-' + r.st + '" data-open="' + r.pt.id + '"><b>' + esc(r.pt.bed || '-') + '</b><span>' + esc(r.pt.name) + '</span>' +
+        '<small>' + (r.h ? ICU.HANDOVER_STATUS[r.st].th : 'ยังไม่เริ่ม') + (r.v && !r.v.complete && r.st !== 'none' ? ' · ขาด ' + r.v.missing.length : '') + '</small>' +
+        (r.tasks ? '<i class="bed-tasks" title="งานค้าง">' + r.tasks + '</i>' : '') + '</button>';
+    };
+    const board = '<div class="bed-board">' + wardBeds.map(b => {
+      const r = show.find(x => !used.has(x.pt.id) && norm(x.pt.bed) === norm(b));
+      if (r) used.add(r.pt.id);
+      return f === 'all' || r ? tile(b, r) : '';
+    }).join('') + show.filter(r => !used.has(r.pt.id)).map(r => tile(r.pt.bed, r)).join('') + '</div>';
+
+    const info = isNow ? ICU.shiftEndInfo() : null;
     return {
       title: 'หน้าหลัก',
       html: pageHead('หน้าหลัก', 'Dashboard',
-          '<a class="btn primary" href="#/patients/new">' + icon('plus') + 'เพิ่มผู้ป่วย</a>') +
+          '<div class="btns"><button class="btn ghost" id="line-shift">' + icon('share') + 'ส่ง LINE ทั้งเวร</button>' +
+          '<a class="btn ghost" href="#/print/shift?date=' + date + '&shift=' + shift + '">' + icon('print') + 'พิมพ์ทั้งเวร</a>' +
+          '<a class="btn primary" href="#/patients/new">' + icon('plus') + 'เพิ่มผู้ป่วย</a></div>') +
+        shiftWarn(info, true) +
         '<div class="dash-bar card"><label class="date-in">' + icon('history', 16) + '<input type="date" id="home-date" value="' + date + '" aria-label="วันที่"></label>' +
-        shiftSeg(date, shift, '#/home') + '<a class="btn ghost sm" href="#/home">เวรปัจจุบัน</a></div>' +
+        shiftSeg(date, shift, '#/home') + '<a class="btn ghost sm" href="#/home">เวรปัจจุบัน</a>' +
+        '<div class="seg view-seg"><a href="#" data-view="cards" class="' + (viewMode === 'cards' ? 'on' : '') + '">การ์ด</a><a href="#" data-view="board" class="' + (viewMode === 'board' ? 'on' : '') + '">ผังเตียง</a></div></div>' +
         '<div class="kpis">' + kpi('all', k.all, 'ผู้ป่วยในเวรนี้', 'navy') + kpi('none', k.none, 'ยังไม่เริ่ม', 'gray') + kpi('progress', k.progress, 'Draft / In Progress', 'blue') +
         kpi('ready_for_review', k.ready_for_review, 'Ready for Review', 'amber') + kpi('handed_over', k.handed_over, 'ส่งเวรแล้ว', 'teal') + '</div>' +
-        (show.length ? '<div class="pcards">' + cards + '</div>' : '<div class="empty card">' + icon('users', 40) + '<p>ไม่มีผู้ป่วยในรายการนี้</p><div class="btns" style="justify-content:center"><a class="btn primary" href="#/patients/new">' + icon('plus') + 'เพิ่มผู้ป่วย</a>' +
+        (show.length || (viewMode === 'board' && wardBeds.length && f === 'all') ? (viewMode === 'board' ? board : '<div class="pcards">' + cards + '</div>')
+          : '<div class="empty card">' + icon('users', 40) + '<p>ไม่มีผู้ป่วยในรายการนี้</p><div class="btns" style="justify-content:center"><a class="btn primary" href="#/patients/new">' + icon('plus') + 'เพิ่มผู้ป่วย</a>' +
           (S.patients({ includeArchived: true }).length || ICU.cloud.enabled() ? '' : '<a class="btn ghost" href="#/settings">ลองใช้ด้วยข้อมูลตัวอย่าง</a>') + '</div></div>'),
       mount(el) {
         el.querySelector('#home-date').onchange = e => UI.go('#/home?date=' + e.target.value + '&shift=' + shift);
         el.querySelectorAll('[data-open]').forEach(b => { b.onclick = () => ICU.openHandover(b.dataset.open, date, shift); });
+        el.querySelectorAll('[data-view]').forEach(a => { a.onclick = e => { e.preventDefault(); S.saveSettings({ homeView: a.dataset.view }); render(); }; });
+        el.querySelector('#line-shift').onclick = () => UI.share(ICU.shiftLineText(date, shift, S.shiftRows(date, shift)), 'ส่งเวร' + U.shift(shift).label);
       }
     };
   };
@@ -297,10 +351,10 @@
   };
 
   /* -------------------------------------------------------- patient form */
-  ICU.views.patientForm = function (params) {
+  ICU.views.patientForm = function (params, q) {
     const p = params[0] ? S.patient(params[0]) : null;
     if (params[0] && !p) return { redirect: '#/patients' };
-    const v = p || { status: 'active', admitDate: U.dateStr(), admitTime: U.timeStr() };
+    const v = p || { status: 'active', admitDate: U.dateStr(), admitTime: U.timeStr(), bed: (q && q.bed) || '' };
     const val = k => esc(v[k] == null ? '' : v[k]);
     const opt = (k, l, cur) => '<option value="' + k + '"' + (k === cur ? ' selected' : '') + '>' + esc(l) + '</option>';
     const title = p ? 'แก้ไขข้อมูลผู้ป่วย' : 'เพิ่มผู้ป่วยใหม่';
@@ -551,19 +605,35 @@
         '<label class="fld span2">หอผู้ป่วย<input name="ward" value="' + esc(st.ward) + '"></label>' +
         '<div class="fld"><span>&nbsp;</span><button class="btn primary" type="submit">บันทึก</button></div>' +
         '<div class="fld"><span>&nbsp;</span><a class="btn ghost" href="#/print/blank">' + icon('file') + 'แบบฟอร์มเปล่า</a></div></div></form>' +
+        '<form class="card" id="set-view"><h2 class="sec-t">' + icon('moon') + 'การแสดงผล</h2><div class="grid g4">' +
+        '<label class="fld span2">โหมดสี<select name="theme">' + [['night', 'มืดอัตโนมัติช่วงเวรดึก (20:00-08:00)'], ['light', 'สว่างตลอด'], ['dark', 'มืดตลอด'], ['system', 'ตามมือถือ / คอม']]
+          .map(o => '<option value="' + o[0] + '"' + (st.theme === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') + '</select></label>' +
+        '<label class="fld span4">เตียงของวอร์ด (สำหรับผังเตียง คั่นด้วย , )<textarea name="beds" rows="2" placeholder="เช่น ICU-1 / 01, ICU-1 / 02, ICU-1 / 03">' + esc(st.beds || '') + '</textarea></label>' +
+        '<div class="fld"><button class="btn primary" type="submit">บันทึก</button></div></div>' +
+        '<p class="hint">ผังเตียงแสดงเตียงว่างด้วยเมื่อใส่รายชื่อเตียงไว้ (ตั้งค่านี้เก็บเฉพาะเครื่องนี้)</p></form>' +
         (cloud
           ? '<section class="card"><h2 class="sec-t">' + icon('users') + 'ข้อมูลกลางของวอร์ด (Cloud)</h2>' +
             '<p class="hint">ทุกเครื่องที่เข้าระบบด้วยรหัสวอร์ดเห็นข้อมูลชุดเดียวกัน · ซิงก์อัตโนมัติทุก ' + (ICU.CLOUD.pollSeconds || 15) + ' วินาที · ใช้แบบออฟไลน์ได้ ข้อมูลจะส่งเมื่อมีเน็ต</p>' +
             '<p>สถานะ: <b>' + esc(cs.lastOk ? 'ซิงก์ล่าสุด ' + U.timeStr(cs.lastOk) : 'ยังไม่ได้ซิงก์') + '</b> · รอส่ง <b>' + cs.pending + '</b> รายการ' +
             (cs.lastErr ? '<br><small class="muted">' + esc(cs.lastErr) + '</small>' : '') + ' · ในเครื่องนี้ ' + raw.patients.length + ' ผู้ป่วย, ' + raw.handovers.length + ' บันทึก</p>' +
             '<div class="btns"><button class="btn primary" id="sync-now">ซิงก์ตอนนี้</button><button class="btn ghost" id="exp">' + icon('download') + 'Export สำรอง (.json)</button>' +
-            '<button class="btn ghost" id="reload">โหลดข้อมูลใหม่จาก Cloud</button><button class="btn ghost danger-t" id="signout">ออกจากระบบเครื่องนี้</button></div></section>'
+            '<button class="btn ghost" id="reload">โหลดข้อมูลใหม่จาก Cloud</button><button class="btn ghost danger-t" id="signout">ออกจากระบบเครื่องนี้</button></div>' +
+            '<p class="hint">เข้าระบบด้วย: <b>' + esc(ICU.cloud.account() || '-') + '</b> · การเชื่อมต่อสด: <b>' + (cs.live ? 'เปิด (เห็นข้อมูลทันที)' : 'ไม่ได้เชื่อมต่อ (ใช้การดึงทุก ' + (ICU.CLOUD.pollSeconds || 15) + ' วินาที)') + '</b></p></section>' +
+            '<section class="card"><h2 class="sec-t">' + icon('user') + 'บัญชีรายคน</h2>' +
+            '<p class="hint">แต่ละคนมีชื่อผู้ใช้ + รหัสผ่านของตัวเองได้ (ประวัติการแก้ไขจะผูกกับบัญชีจริง และถอนสิทธิ์รายคนได้) · รหัสวอร์ดยังใช้ได้ (เว้นช่องชื่อผู้ใช้ว่าง)</p>' +
+            '<ol class="review"><li>Supabase → Authentication → Users → <b>Add user</b> → Email = <code>ชื่อผู้ใช้@' + esc(ICU.CLOUD.userDomain) + '</code> (เช่น malee@' + esc(ICU.CLOUD.userDomain) + ') · รหัสผ่าน ≥ 6 ตัว · ติ๊ก Auto Confirm</li>' +
+            '<li>บอกชื่อผู้ใช้ (malee) + รหัสผ่าน ให้เจ้าตัว → ในแอปกด "ออกจากระบบ" แล้วเข้าใหม่ด้วยชื่อผู้ใช้</li>' +
+            '<li>ถอนสิทธิ์: ลบผู้ใช้คนนั้นใน Supabase (เครื่องของเขาจะออกจากระบบภายใน 1 ชั่วโมง)</li></ol></section>'
           : '<section class="card"><h2 class="sec-t">' + icon('download') + 'สำรอง / ย้ายข้อมูล</h2>' +
             '<p class="hint">ข้อมูลเก็บในเครื่องนี้เท่านั้น (' + raw.patients.length + ' ผู้ป่วย, ' + raw.handovers.length + ' บันทึก, ~' + size + ' KB) มือถือกับคอมไม่ซิงค์กันเอง ใช้ Export / Import</p>' +
             '<div class="btns"><button class="btn ghost" id="exp">' + icon('download') + 'Export (.json)</button>' +
             '<label class="btn ghost">' + icon('upload') + 'Import (.json)<input type="file" id="imp" accept=".json,application/json" hidden></label>' +
             '<button class="btn ghost" id="demo">โหลดข้อมูลตัวอย่าง (สมมติ)</button><button class="btn danger" id="wipe">ลบข้อมูลทั้งหมด</button></div>' +
             '<p class="hint">ข้อมูลตัวอย่างมีป้าย "ข้อมูลสมมติ" กดอีกครั้งเพื่อลบชุดเดิมแล้วสร้างใหม่ ข้อมูลผู้ป่วยจริงไม่ถูกแตะ</p></section>') +
+        '<section class="card"><h2 class="sec-t">' + icon('trash') + 'ลบข้อมูลเก่าอัตโนมัติ (PDPA)</h2><p class="hint">' +
+        (ICU.RETENTION.leftDays > 0 ? 'ผู้ป่วยที่ย้ายออก / จำหน่าย / เสียชีวิต และไม่มีการแก้ไขเกิน <b>' + ICU.RETENTION.leftDays + ' วัน</b> → เก็บถาวร + ย้ายบันทึกไปถังขยะ' : 'ปิดอยู่') +
+        (ICU.RETENTION.trashDays > 0 ? ' · ถังขยะเกิน ' + ICU.RETENTION.trashDays + ' วัน → ลบถาวร' : ' · ถังขยะไม่ลบถาวรเอง') +
+        ' · ตรวจวันละครั้ง (ล่าสุด ' + esc(st.lastClean ? U.thaiDate(st.lastClean) : '-') + ')</p></section>' +
         '<section class="card"><h2 class="sec-t">' + icon('alert') + 'ต้องให้ผู้เชี่ยวชาญตรวจสอบก่อนใช้งานจริง</h2><ol class="review">' + ICU.REVIEW_ITEMS.map(x => '<li>' + esc(x) + '</li>').join('') + '</ol>' +
         '<p class="hint">ระบบนี้ช่วยบันทึกและตรวจความครบถ้วนเท่านั้น ไม่สร้างคำแนะนำการรักษาหรือการตัดสินใจทางคลินิก</p></section>' +
         '<section class="card"><h2 class="sec-t">' + icon('history') + 'ประวัติการแก้ไขข้อมูล (Audit log) ล่าสุด</h2><div class="table-wrap"><table class="tbl"><thead><tr><th>เวลา</th><th>ผู้ใช้</th><th>การกระทำ</th><th>รายการ</th></tr></thead><tbody>' + auditRows + '</tbody></table></div></section>' +
@@ -571,6 +641,7 @@
       mount(el) {
         el.querySelector('#set-user').onsubmit = e => { e.preventDefault(); S.saveSettings(Object.fromEntries(new FormData(e.target))); UI.toast('บันทึกแล้ว', 'ok'); render(); };
         el.querySelector('#set-print').onsubmit = e => { e.preventDefault(); S.saveSettings(Object.fromEntries(new FormData(e.target))); UI.toast('บันทึกแล้ว', 'ok'); };
+        el.querySelector('#set-view').onsubmit = e => { e.preventDefault(); S.saveSettings(Object.fromEntries(new FormData(e.target))); applyTheme(); UI.toast('บันทึกแล้ว', 'ok'); };
         el.querySelector('#exp').onclick = () => {
           const a = document.createElement('a');
           a.href = URL.createObjectURL(new Blob([S.exportJSON()], { type: 'application/json' }));
@@ -616,8 +687,40 @@
   /* ---------------------------------------------------------------- start */
   window.addEventListener('hashchange', render);
   document.getElementById('sync-chip').onclick = () => { ICU.cloud.run(); const s = ICU.cloud.status(); if (s.lastErr) UI.toast('ซิงก์: ' + s.lastErr, 'error'); };
-  tick(); setInterval(tick, 30000);
+  /* dark mode: 'night' = dark during the night shift */
+  function applyTheme() {
+    const t = S.settings().theme || 'night', h = new Date().getHours();
+    const dark = t === 'dark' || (t === 'night' && (h >= 20 || h < 8)) || (t === 'system' && window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
+    document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+    const m = document.querySelector('meta[name=theme-color]');
+    if (m) m.content = dark ? '#0A1628' : '#0B2545';
+  }
+  ICU.applyTheme = applyTheme;
+
+  /* PDPA clean-up once a day (after the first sync when the ward data is in) */
+  function dailyClean() {
+    const today = U.dateStr();
+    if (S.settings().lastClean === today) return;
+    const n = S.autoClean();
+    S.saveSettings({ lastClean: today });
+    if (n) { UI.toast('ลบข้อมูลเก่าอัตโนมัติ ' + n + ' รายการ (ดูได้ในถังขยะ)'); render(); }
+  }
+  ICU.onSynced = dailyClean;
+
+  let lastWarn = '';
+  setInterval(() => {
+    tick(); applyTheme();
+    /* shift-end banner appears / changes without waiting for a click */
+    const i = ICU.shiftEndInfo(), sig = i ? i.mins + ':' + i.pending.length : '';
+    const a = document.activeElement;
+    if (sig !== lastWarn && !(a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) && !document.getElementById('dialog').open && !document.body.classList.contains('print-mode')) {
+      lastWarn = sig; ICU._soft = true; render(); ICU._soft = false;
+    }
+  }, 30000);
+  tick(); applyTheme();
+  if (window.matchMedia) matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
   render();
+  if (!ICU.cloud.enabled()) dailyClean();
   if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
     window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
   }

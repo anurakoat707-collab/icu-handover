@@ -60,7 +60,7 @@
     let cd = 0;
     if (c.reason.trim()) cd++; else R.care.missing.push('A. เหตุผลการรับไว้ใน ICU');
     if (Object.keys(c.monitoring).some(k => c.monitoring[k])) cd++; else R.care.missing.push('B. เลือกรายการเฝ้าระวังอย่างน้อย 1 ข้อ');
-    if (Object.keys(c.plan).some(k => c.plan[k]) || c.pendingTasks.trim()) cd++; else R.care.missing.push('C. แผนการดูแลต่อเนื่องอย่างน้อย 1 ข้อ');
+    if (Object.keys(c.plan).some(k => c.plan[k]) || c.pendingTasks.trim() || (c.tasks || []).length) cd++; else R.care.missing.push('C. แผนการดูแลต่อเนื่องอย่างน้อย 1 ข้อ');
     Object.assign(R.care, { done: cd, total: 3 });
 
     const stepOf = { info: 'fancas', fancas: 'fancas', fasthugbid: 'fasthugbid', dope: 'dope', care: 'care' };
@@ -112,8 +112,54 @@
     const plan = itemText(ICU.PLAN, h.care.plan, h.care.planValues);
     L.push('[เฝ้าระวัง] ' + (mon.join(', ') || '-') + (h.care.monitoringNote ? ' - ' + h.care.monitoringNote : ''));
     L.push('[แผนการดูแล] ' + (plan.join(', ') || '-'));
+    taskLines(h).forEach(t => L.push(t));
     if (h.care.pendingTasks) L.push('[งานที่ยังไม่เสร็จ / ต้องติดตาม] ' + h.care.pendingTasks);
     if (h.care.nextShiftNote) L.push('[ข้อมูลสำคัญสำหรับเวรถัดไป] ' + h.care.nextShiftNote);
     return L.join('\n');
+  };
+
+  function taskLines(h) {
+    const ts = (h.care && h.care.tasks) || [];
+    if (!ts.length) return [];
+    return ['[งานที่ต้องติดตาม]'].concat(ts.map(t => (t.done ? '☑ ' : '☐ ') + (t.due ? t.due + ' ' : '') + t.text + (t.done ? ' (เสร็จ ' + (t.doneBy || '') + ')' : '')));
+  }
+  ICU.taskLines = taskLines;
+
+  /* problems worth saying out loud: FANCAS with problems, FASTHUGBID "second box", DOPE found */
+  ICU.keyPoints = function (h) {
+    const out = [];
+    ICU.FANCAS.forEach(g => {
+      const f = h.fancas[g.id];
+      if (f.state === 'problem') out.push(g.letter + ': ' + (itemText(g.items, f.items, f.values).join(', ') || f.detail || 'มีปัญหา'));
+    });
+    const fh = ICU.FASTHUGBID.filter(f => h.fasthugbid[f.id].state === 'assessed' && h.fasthugbid[f.id].finding === 1)
+      .map(f => f.en + ' ' + f.opts[1] + (h.fasthugbid[f.id].note ? ' (' + h.fasthugbid[f.id].note + ')' : ''));
+    if (fh.length) out.push('FASTHUGBID: ' + fh.join(', '));
+    if (h.dope.onVentilator) {
+      const found = ICU.DOPE.filter(d => h.dope.items[d.id].result === 'found').map(d => d.en + (h.dope.items[d.id].action ? ' → ' + h.dope.items[d.id].action : ''));
+      if (found.length) out.push('DOPE: ' + found.join(', '));
+    }
+    return out;
+  };
+
+  /* short text for LINE (one bed) */
+  ICU.lineText = function (h, p) {
+    const L = ['🛏 ' + (p.bed || '-') + ' · ' + p.name + ' (' + (p.age || '-') + ' ปี ' + U.sexLabel(p.sex) + ')'];
+    if (h.care.reason) L.push('Dx/เหตุผล: ' + h.care.reason);
+    ICU.keyPoints(h).forEach(k => L.push('• ' + k));
+    const mon = itemText(ICU.MONITORING, h.care.monitoring, h.care.monitoringValues);
+    if (mon.length) L.push('⚠ เฝ้าระวัง: ' + mon.join(', '));
+    ICU.openTasksOf(h).forEach(t => L.push('☐ ' + (t.due ? t.due + ' ' : '') + t.text));
+    if (h.care.pendingTasks) L.push('☐ ' + h.care.pendingTasks);
+    if (h.care.nextShiftNote) L.push('➡ ' + h.care.nextShiftNote);
+    return L.join('\n');
+  };
+  ICU.openTasksOf = h => ((h.care && h.care.tasks) || []).filter(t => !t.done);
+
+  /* the whole shift for LINE */
+  ICU.shiftLineText = function (date, shift, rows) {
+    const L = ['📋 ส่งเวร' + U.shift(shift).label + ' ' + U.thaiDate(date) + ' (' + U.shift(shift).time + ')', ''];
+    rows.forEach(r => { L.push(r.h ? ICU.lineText(r.h, r.p) : '🛏 ' + (r.p.bed || '-') + ' · ' + r.p.name + ' - ยังไม่มีบันทึกเวรนี้'); L.push(''); });
+    return L.join('\n').trim();
   };
 })();

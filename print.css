@@ -85,6 +85,19 @@ body.print-mode #view { max-width: 1000px; }
 .pp-meta { margin-left: auto; font-size: 6.6pt; color: #555; }
 .pp-disc { font-size: 6.2pt; color: #666; text-align: center; }
 
+/* shift print: several sheets + the one-page summary of all beds */
+.a4-wrap + .a4-wrap { margin-top: 18px; }
+.a4.sum-page { min-height: 297mm; display: block; }
+.sum-head { grid-template-columns: 13mm 1.2fr 1.6fr 0.8fr; }
+.sum-tbl { width: 100%; border-collapse: collapse; margin-top: 3mm; font-size: 7.8pt; }
+.sum-tbl th { background: #0B2545; color: #fff; font-weight: 700; padding: 1.2mm 1.4mm; text-align: left; font-size: 7.4pt; }
+.sum-tbl td { border-bottom: .25mm solid #bbb; padding: 1.2mm 1.4mm; vertical-align: top; }
+.sum-tbl td.b { font-weight: 800; color: #0B2545; white-space: nowrap; }
+.sum-tbl td small { display: block; color: #555; font-size: 6.6pt; }
+.sum-tbl td div + div { margin-top: .6mm; }
+.sum-tbl tr { break-inside: avoid; }
+.pp-dash { color: #999; }
+
 /* ------------------------------------------------------------- print */
 @media print {
   @page { size: A4 portrait; margin: 0; }
@@ -94,5 +107,9 @@ body.print-mode #view { max-width: 1000px; }
   #view { padding: 0 !important; margin: 0 !important; max-width: none !important; }
   .a4-wrap { height: auto !important; overflow: visible !important; }
   .a4 { transform: none !important; box-shadow: none !important; margin: 0 !important; width: 210mm; height: 296mm; min-height: 0; page-break-after: avoid; }
+  .a4-wrap + .a4-wrap { margin-top: 0 !important; break-before: page; page-break-before: always; }
+  .a4.sum-page { height: auto; min-height: 0; overflow: visible; }
+  .shift-warn { display: none !important; }
+  :root[data-theme=dark] body { background: #fff !important; color: #111 !important; }
   body:not(.print-mode) .action-bar { display: none !important; }
 }
