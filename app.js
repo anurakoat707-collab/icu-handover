@@ -33,7 +33,8 @@
     upload: '<path d="M12 21V9M7 14l5-5 5 5M4 3h16"/>',
     bed: '<path d="M3 18V7M3 14h18v4M21 14v-3a3 3 0 0 0-3-3h-7v6"/><circle cx="7" cy="10.5" r="1.5"/>',
     x: '<path d="M6 6l12 12M18 6L6 18"/>',
-    shield: '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/>'
+    shield: '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/>',
+    trash: '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/>'
   };
   const icon = (n, s) => '<svg class="ic" viewBox="0 0 24 24" width="' + (s || 18) + '" height="' + (s || 18) + '" aria-hidden="true">' + (IC[n] || '') + '</svg>';
 
@@ -191,7 +192,7 @@
 
   /* ================================================================ HOME */
   ICU.views.home = function (p, q) {
-    const date = q.date || U.dateStr(), shift = q.shift || U.currentShift();
+    const date = q.date || U.currentDate(), shift = q.shift || U.currentShift();
     const slot = U.slot(date, shift);
     const list = S.patients().filter(pt => pt.status === 'active' || S.handoverFor(pt.id, date, shift))
       .sort((a, b) => String(a.bed).localeCompare(String(b.bed), 'th', { numeric: true }));
@@ -286,7 +287,7 @@
         const re = () => { box.innerHTML = rowsHtml(); bind(); };
         const bind = () => {
           box.querySelectorAll('[data-page]').forEach(b => { b.onclick = () => { pf.page = +b.dataset.page; re(); }; });
-          box.querySelectorAll('[data-open]').forEach(b => { b.onclick = () => ICU.openHandover(b.dataset.open, U.dateStr(), U.currentShift()); });
+          box.querySelectorAll('[data-open]').forEach(b => { b.onclick = () => ICU.openHandover(b.dataset.open, U.currentDate(), U.currentShift()); });
         };
         el.querySelector('#pf-q').oninput = e => { pf.q = e.target.value; pf.page = 1; re(); };
         ['status', 'shift', 'room'].forEach(k => { el.querySelector('#pf-' + k).onchange = e => { pf[k] = e.target.value; pf.page = 1; re(); }; });
@@ -354,7 +355,7 @@
     const tab = q.tab || 'info';
     const hs = S.handoversOf(p.id);
     const latest = hs[0];
-    const cur = S.handoverFor(p.id, U.dateStr(), U.currentShift());
+    const cur = S.handoverFor(p.id, U.currentDate(), U.currentShift());
     const tabs = [['info', 'ข้อมูลพื้นฐาน'], ['latest', 'บันทึกล่าสุด'], ['history', 'ประวัติการส่งเวร']];
     let body = '';
     if (tab === 'info') {
@@ -398,7 +399,7 @@
           if (cur) return ICU.openHandover(p.id, cur.date, cur.shift);
           const fd = await UI.dialog({
             title: 'สร้างบันทึกส่งเวร', ok: 'สร้าง',
-            html: '<div class="grid g2"><label class="fld">วันที่<input type="date" name="date" required value="' + U.dateStr() + '"></label>' +
+            html: '<div class="grid g2"><label class="fld">วันที่<input type="date" name="date" required value="' + U.currentDate() + '"></label>' +
               '<label class="fld">เวร<select name="shift">' + ICU.SHIFTS.map(s => '<option value="' + s.id + '"' + (s.id === U.currentShift() ? ' selected' : '') + '>' + s.label + ' (' + s.time + ')</option>').join('') + '</select></label></div>' +
               (latest ? '<p class="hint">FANCAS และแผนการดูแลจะคัดลอกจากบันทึกล่าสุด (เวร' + U.shift(latest.shift).label + ' ' + U.thaiDate(latest.date) + ') ส่วน FASTHUGBID และ DOPE ต้องประเมินใหม่</p>' : '')
           });
@@ -425,15 +426,76 @@
       lastDate = h.date;
       return head + '<div class="hitem card">' +
         '<span class="shift-tag s-' + h.shift + '">เวร' + U.shift(h.shift).label + '</span>' +
-        '<div class="hi-main">' + (withPatient ? '<b>' + esc(p.name) + '</b> <small class="muted">HN ' + esc(p.hn) + '</small><br>' : '') +
+        '<div class="hi-main">' + (withPatient ? '<b>' + esc(p.name) + '</b> <small class="muted">' + esc(p.bed || '') + (p.hn ? ' · HN ' + esc(p.hn) : '') + '</small><br>' : '') +
         '<small>โดย ' + esc(h.giver || h.createdBy) + (h.receiver ? ' → ' + esc(h.receiver) : '') + ' · ' + esc(h.time || '') + ' น.</small>' +
         (h.amendsId ? ' <span class="badge outline">บันทึกแก้ไข</span>' : '') + (sup.has(h.id) ? ' <span class="badge gray">ถูกแก้ไขแล้ว</span>' : '') + '</div>' +
         UI.badge(h.status) +
-        '<div class="btns"><a class="btn ghost sm" href="#/print/' + h.id + '" aria-label="พิมพ์ A4">' + icon('print') + '</a><a class="btn ghost sm" href="#/handover/' + h.id + '/summary">ดูรายละเอียด</a></div></div>';
+        '<div class="btns"><a class="btn ghost sm" href="#/print/' + h.id + '" aria-label="พิมพ์ A4">' + icon('print') + '</a><a class="btn ghost sm" href="#/handover/' + h.id + '/summary">ดูรายละเอียด</a>' +
+        '<button class="btn ghost sm danger-t" data-trash="' + h.id + '" title="ลบ (ย้ายไปถังขยะ)" aria-label="ลบ">' + icon('trash') + '</button></div></div>';
     }).join('') + '</div>';
   }
 
+  /* ---- delete in 2 steps: trash (can be restored) -> delete for good (from the trash only) */
+  ICU.trashHandover = async function (id, after) {
+    const h = S.handover(id), p = h && S.patient(h.patientId);
+    if (!h) return;
+    const fd = await UI.dialog({
+      title: 'ลบบันทึกส่งเวร', ok: 'ย้ายไปถังขยะ', danger: true,
+      html: '<p><b>' + esc(p ? p.name : '') + '</b> เวร' + esc(U.shift(h.shift).label) + ' ' + U.thaiDate(h.date) + ' ' + UI.badge(h.status) + '</p>' +
+        '<p class="hint">ย้ายไปถังขยะก่อน (ทุกเครื่องในวอร์ดจะไม่เห็นในรายการ) กู้คืนได้ที่ ประวัติ → ถังขยะ · ลบถาวรได้จากถังขยะเท่านั้น</p>' +
+        '<label class="fld">เหตุผล (ไม่บังคับ)<input name="reason" maxlength="200" placeholder="เช่น บันทึกซ้ำ / กรอกผิดคน"></label>'
+    });
+    if (!fd) return;
+    S.trashHandover(id, fd.get('reason'));
+    UI.toast('ย้ายไปถังขยะแล้ว - กู้คืนได้ที่ ประวัติ → ถังขยะ', 'ok');
+    if (after) UI.go(after); else render();
+  };
+  ICU.restoreHandover = function (id) { if (S.restoreHandover(id)) { UI.toast('กู้คืนแล้ว', 'ok'); render(); } };
+  ICU.purgeHandover = async function (id, after) {
+    const h = S.handover(id), p = h && S.patient(h.patientId);
+    if (!h) return;
+    const fd = await UI.dialog({
+      title: 'ลบถาวร', ok: 'ลบถาวร', danger: true,
+      html: '<p><b>' + esc(p ? p.name : '') + '</b> เวร' + esc(U.shift(h.shift).label) + ' ' + U.thaiDate(h.date) + '</p>' +
+        '<p>บันทึกนี้จะถูกลบออกจาก<b>ทุกเครื่องในวอร์ด</b> และ<b>กู้คืนไม่ได้</b> (ประวัติการแก้ไขยังบันทึกว่าใครลบ)</p>' +
+        '<label class="fld">พิมพ์คำว่า ลบ เพื่อยืนยัน<input name="c" required autocomplete="off"></label>',
+      validate: f => f.get('c').trim() === 'ลบ' ? '' : 'พิมพ์คำว่า ลบ ให้ถูกต้อง'
+    });
+    if (!fd) return;
+    S.purgeHandover(id);
+    UI.toast('ลบถาวรแล้ว');
+    if (after) UI.go(after); else render();
+  };
+  document.getElementById('view').addEventListener('click', e => {
+    const b = e.target.closest('[data-trash],[data-restore],[data-purge]');
+    if (!b) return;
+    if (b.dataset.trash) ICU.trashHandover(b.dataset.trash);
+    else if (b.dataset.restore) ICU.restoreHandover(b.dataset.restore);
+    else ICU.purgeHandover(b.dataset.purge);
+  });
+
+  function trashView() {
+    const list = S.trash();
+    return {
+      title: 'ถังขยะ', nav: 'history', back: '#/history',
+      html: pageHead('ถังขยะ', 'Deleted handovers', '<a class="btn ghost" href="#/history">' + icon('back') + 'กลับไปประวัติ</a>') +
+        '<p class="hint">บันทึกที่ลบแล้ว กู้คืนได้ หรือลบถาวร (ลบถาวรแล้วจะหายจากทุกเครื่อง กู้คืนไม่ได้)</p>' +
+        (list.length ? '<div class="hlist">' + list.map(h => {
+          const p = S.patient(h.patientId) || { name: '(ผู้ป่วยถูกเก็บถาวร)' };
+          return '<div class="hitem card">' +
+            '<span class="shift-tag s-' + h.shift + '">เวร' + U.shift(h.shift).label + '</span>' +
+            '<div class="hi-main"><b>' + esc(p.name) + '</b> <small class="muted">' + U.thaiDate(h.date) + '</small><br>' +
+            '<small>ลบโดย ' + esc(h.deletedBy || '-') + ' · ' + U.thaiDateTime(h.deletedAt) + (h.deleteReason ? ' · เหตุผล: ' + esc(h.deleteReason) : '') + '</small></div>' +
+            UI.badge(h.status) +
+            '<div class="btns"><a class="btn ghost sm" href="#/handover/' + h.id + '/summary">ดู</a>' +
+            '<button class="btn ghost sm" data-restore="' + h.id + '">กู้คืน</button>' +
+            '<button class="btn danger sm" data-purge="' + h.id + '">ลบถาวร</button></div></div>';
+        }).join('') + '</div>' : '<div class="empty card">' + icon('trash', 40) + '<p>ถังขยะว่าง</p></div>')
+    };
+  }
+
   ICU.views.history = function (p, q) {
+    if (q.view === 'trash') return trashView();
     const range = q.range || '7', st = q.status || '', qq = q.q || '';
     const from = range === 'today' ? U.dateStr() : range === '7' ? U.addDays(U.dateStr(), -6) : range === '30' ? U.addDays(U.dateStr(), -29) : '';
     const needle = qq.trim().toLowerCase();
@@ -444,7 +506,7 @@
     const link = (r, s) => '#/history?range=' + r + '&status=' + s + '&q=' + encodeURIComponent(qq);
     return {
       title: 'ประวัติการส่งเวร',
-      html: pageHead('ประวัติการส่งเวร', 'Handover History') +
+      html: pageHead('ประวัติการส่งเวร', 'Handover History', '<a class="btn ghost" href="#/history?view=trash">' + icon('trash') + 'ถังขยะ (' + S.trash().length + ')</a>') +
         '<div class="card filters">' +
         '<label class="search">' + icon('search') + '<input type="search" id="h-q" placeholder="ค้นหา HN, AN, ชื่อผู้ป่วย, เตียง..." value="' + esc(qq) + '"></label>' +
         '<div class="chips">' + [['all', 'ทั้งหมด'], ['today', 'วันนี้'], ['7', '7 วัน'], ['30', '30 วัน']].map(r => '<a class="chip' + (r[0] === range ? ' on' : '') + '" href="' + link(r[0], st) + '">' + r[1] + '</a>').join('') + '</div>' +
@@ -464,7 +526,8 @@
   ICU.views.settings = function () {
     const st = S.settings();
     const raw = S.raw();
-    const actions = { create: 'สร้าง', update: 'แก้ไข', status: 'เปลี่ยนสถานะ', submit: 'ยืนยันส่งเวร', amend: 'สร้างบันทึกแก้ไข', archive: 'เก็บถาวร', discard: 'ลบฉบับร่าง', import: 'นำเข้า', demo: 'ข้อมูลสมมติ' };
+    const actions = { create: 'สร้าง', update: 'แก้ไข', status: 'เปลี่ยนสถานะ', submit: 'ยืนยันส่งเวร', amend: 'สร้างบันทึกแก้ไข', archive: 'เก็บถาวร', discard: 'ลบฉบับร่าง', import: 'นำเข้า', demo: 'ข้อมูลสมมติ',
+      trash: 'ย้ายไปถังขยะ', restore: 'กู้คืน', purge: 'ลบถาวร' };
     const auditRows = S.auditAll().slice(0, 80).map(a => {
       let target = '';
       if (a.entity === 'patient') target = (S.patient(a.entityId) || {}).name || 'ผู้ป่วย';

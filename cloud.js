@@ -62,10 +62,12 @@
     const sy = S.syncState(), k = kind + ':' + id;
     const rec = S.record(kind, id);
     if (!rec) { delete sy.dirty[k]; return; }
+    if (rec.purgedAt && sy.ver[k] == null) { S.removeLocal(kind, id); return; }   /* deleted before it ever reached the server */
     const json = JSON.stringify(rec);
     const row = { id, data: rec };
     if (kind === 'h') row.patient_id = rec.patientId;
     const ver = sy.ver[k];
+    let locked = false;
     if (ver == null) {
       try {
         const r = await api('POST', TABLE[kind], row, 'return=representation');
@@ -76,19 +78,24 @@
       try {
         const r = await api('PATCH', TABLE[kind] + '?id=eq.' + enc(id) + '&version=eq.' + ver, { data: rec }, 'return=representation');
         if (r && r.length) { S.sent(kind, id, r[0].version, json); return; }
-      } catch (e) { if (e.code !== 'P0001') throw e; }
+      } catch (e) { if (e.code !== 'P0001') throw e; locked = true; }
     }
     /* conflict: somebody else changed it (or it is locked) */
     const cur = (await api('GET', TABLE[kind] + '?id=eq.' + enc(id) + '&select=id,data,version'))[0];
-    if (!cur) { sy.ver[k] = null; return pushRecord(kind, id); }
-    if (kind === 'h' && cur.data.status === 'handed_over') {
+    if (!cur) {
+      if (rec.purgedAt || sy.ver[k] != null) { S.removeLocal(kind, id); changedRemote = true; return; }   /* deleted for good elsewhere */
+      sy.ver[k] = null; return pushRecord(kind, id);
+    }
+    const lockedRemote = () => {
       S.applyRemote(kind, cur, true);
       ICU.toast('บันทึกนี้ถูกส่งเวรจากเครื่องอื่นแล้ว - การแก้ไขล่าสุดของเครื่องนี้ไม่ถูกบันทึก', 'error');
       changedRemote = true;
-      return;
-    }
+    };
+    if (locked) return lockedRemote();
     const merged = merge(sy.base[k], rec, cur.data);
-    const r2 = await api('PATCH', TABLE[kind] + '?id=eq.' + enc(id) + '&version=eq.' + cur.version, { data: merged }, 'return=representation');
+    let r2;
+    try { r2 = await api('PATCH', TABLE[kind] + '?id=eq.' + enc(id) + '&version=eq.' + cur.version, { data: merged }, 'return=representation'); }
+    catch (e) { if (e.code === 'P0001') return lockedRemote(); throw e; }
     if (!r2 || !r2.length) { again = true; return; }
     S.applyRemote(kind, r2[0], true);
     ICU.toast('มีคนแก้ ' + (kind === 'h' ? 'บันทึกส่งเวร' : 'ข้อมูลผู้ป่วย') + ' นี้พร้อมกัน - รวมการแก้ไขแล้ว (' + (cur.data.updatedBy || 'อีกเครื่อง') + ')');
@@ -99,7 +106,14 @@
     const sy = S.syncState();
     const keys = Object.keys(sy.dirty).sort();          /* "h:..." < "p:..." -> send patients first */
     for (const k of keys.filter(x => x[0] === 'p').concat(keys.filter(x => x[0] === 'h'))) {
-      await pushRecord(k[0], k.slice(2));
+      const kind = k[0], id = k.slice(2);
+      await pushRecord(kind, id);
+      /* "delete for good": the server copy is in the trash now -> remove the row */
+      const r = S.record(kind, id);
+      if (kind === 'h' && r && r.purgedAt && sy.ver[k] != null && !sy.dirty[k]) {
+        await api('DELETE', 'handovers?id=eq.' + enc(id));
+        S.removeLocal('h', id);
+      }
     }
     while (sy.dels.length) {
       await api('DELETE', 'handovers?id=eq.' + enc(sy.dels[0]));
@@ -116,7 +130,7 @@
   }
 
   /* ------------------------------------------------------------------ pull */
-  let changedRemote = false, fullDone = false;
+  let changedRemote = false, fullDone = false, pulls = 0;
   async function pull() {
     const sy = S.syncState();
     const since = sy.lastPull || '1970-01-01T00:00:00Z';
@@ -125,8 +139,8 @@
       const rows = await api('GET', TABLE[kind] + '?select=id,data,version,updated_at&updated_at=gte.' + enc(since) + '&order=updated_at.asc&limit=2000');
       rows.forEach(r => { if (S.applyRemote(kind, r)) changedRemote = true; if (!maxAt || r.updated_at > maxAt) maxAt = r.updated_at; });
     }
-    if (!fullDone) {
-      /* drafts deleted on other phones */
+    if (!fullDone || ++pulls % 4 === 0) {
+      /* records deleted for good (or empty drafts deleted) on other phones - checked about once a minute */
       const ids = (await api('GET', 'handovers?select=id')).map(r => r.id);
       if (S.dropRemoved('h', ids)) changedRemote = true;
       fullDone = true;
@@ -222,7 +236,7 @@
       const btn = f.querySelector('button[type=submit]');
       btn.disabled = true; btn.textContent = 'กำลังเข้าสู่ระบบ…'; err.textContent = '';
       try {
-        keep(await authCall('password', { email: C.email, password: f.pass.value.trim() }));
+        keep(await authCall('password', { email: C.email, password: f.pass.value.trim().toUpperCase() + (C.passSuffix || '') }));
         S.saveSettings({ userName: f.name.value.trim() });
         localStorage.setItem('icuhandover.named', '1');
         document.body.classList.remove('locked');

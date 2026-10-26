@@ -5,7 +5,7 @@ window.ICU = window.ICU || {};
 ICU.seedDemo = function (db) {
   'use strict';
   const U = ICU.util;
-  const today = U.dateStr();
+  const today = U.currentDate();
   const cur = U.currentShift();
   const prev = U.prevSlot(today, cur);
   const t = U.now();

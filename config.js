@@ -5,11 +5,14 @@ window.ICU = window.ICU || {};
 
 ICU.APP_VERSION = '1.0.0';
 
+/* 2 shifts (26 Oct): the night shift belongs to the date it STARTS (20:00 on that date -> 08:00 next day).
+   no = order inside a date. */
 ICU.SHIFTS = [
-  { id: 'night',     label: 'ดึก',  time: '00:00-08:00', start: 0 },
-  { id: 'morning',   label: 'เช้า', time: '08:00-16:00', start: 8 },
-  { id: 'afternoon', label: 'บ่าย', time: '16:00-24:00', start: 16 }
+  { id: 'morning', label: 'เช้า', time: '08:00-20:00', start: 8, no: 1 },
+  { id: 'night',   label: 'ดึก',  time: '20:00-08:00', start: 20, no: 3 }
 ];
+/* records made before 26 Oct may still say "afternoon" */
+ICU.LEGACY_SHIFTS = [{ id: 'afternoon', label: 'บ่าย (เดิม)', time: '16:00-24:00', start: 16, no: 2 }];
 
 ICU.PATIENT_STATUS = {
   active:      { label: 'อยู่ใน ICU', cls: 'teal' },
@@ -171,6 +174,8 @@ ICU.CLOUD = {
   url: 'https://fifduhwrmkvdpdjxlewq.supabase.co',
   key: 'sb_publishable_2HXAhXF3gLyMw5xK3aMSDA_g9kWT0ik',
   email: 'ward@icu-handover.app',
+  /* Supabase needs >= 6 characters: the typed ward code (upper case) + this suffix = the account password */
+  passSuffix: '-icu-ward',
   pollSeconds: 15
 };
 

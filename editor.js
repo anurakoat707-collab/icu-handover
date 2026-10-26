@@ -112,7 +112,10 @@
         '<ul>' + groups[k].items.map(t => '<li>' + esc(t) + '</li>').join('') + '</ul></div>').join('') + '</div>';
     }
     let actions = '';
-    if (st === 'draft' || st === 'in_progress') {
+    if (h.deletedAt) {
+      actions = '<p>อยู่ใน<b>ถังขยะ</b> · ลบโดย <b>' + esc(h.deletedBy || '-') + '</b> เมื่อ ' + U.thaiDateTime(h.deletedAt) + (h.deleteReason ? ' · เหตุผล: ' + esc(h.deleteReason) : '') + '</p>' +
+        '<button class="btn primary" data-act="restore">กู้คืน</button><button class="btn danger" data-act="purge">ลบถาวร</button>';
+    } else if (st === 'draft' || st === 'in_progress') {
       actions = '<button class="btn primary" data-act="review"' + (v.complete ? '' : ' disabled') + '>' + ICU.ui.icon('check') + 'ส่งตรวจสอบ (Ready for Review)</button>' +
         (st === 'draft' ? '<button class="btn ghost danger-t" data-act="discard">ลบฉบับร่าง</button>' : '') +
         (v.complete ? '' : '<p class="hint">กรอกให้ครบก่อนจึงจะส่งตรวจสอบได้</p>');
@@ -122,7 +125,9 @@
       actions = '<p>ส่งเวรแล้วโดย <b>' + esc(h.submittedBy || '-') + '</b> เมื่อ ' + U.thaiDateTime(h.submittedAt) + (h.receiver ? ' · ผู้รับเวร <b>' + esc(h.receiver) + '</b>' : '') + '</p>' +
         (amendment ? '<a class="btn ghost" href="#/handover/' + amendment.id + '/summary">ดูบันทึกที่แก้ไขแล้ว ›</a>' : '<button class="btn ghost" data-act="amend">' + ICU.ui.icon('edit') + 'สร้างบันทึกแก้ไข</button>');
     }
-    const auditActions = { create: 'สร้าง', update: 'แก้ไข', status: 'เปลี่ยนสถานะ', submit: 'ยืนยันส่งเวร', amend: 'สร้างบันทึกแก้ไข', discard: 'ลบฉบับร่าง' };
+    if (!h.deletedAt) actions += '<button class="btn ghost danger-t" data-act="trash">' + ICU.ui.icon('trash') + 'ลบบันทึกนี้ (ย้ายไปถังขยะ)</button>';
+    const auditActions = { create: 'สร้าง', update: 'แก้ไข', status: 'เปลี่ยนสถานะ', submit: 'ยืนยันส่งเวร', amend: 'สร้างบันทึกแก้ไข', discard: 'ลบฉบับร่าง',
+      trash: 'ย้ายไปถังขยะ', restore: 'กู้คืน', purge: 'ลบถาวร' };
     const log = S.auditOf(h.id).map(a => '<li><b>' + esc(auditActions[a.action] || a.action) + '</b> ' + esc(a.changes.join(', ')) + (a.note ? ' <span class="muted">' + esc(a.note) + '</span>' : '') +
       '<small>' + esc(a.by) + ' · ' + U.thaiDateTime(a.at) + '</small></li>').join('');
     return '<div class="step-head"><h2>สรุปการส่งเวร <span>Handover Summary</span></h2></div>' +
@@ -144,7 +149,7 @@
     if (!h) return { redirect: '#/home' };
     const p = S.patient(h.patientId) || { id: '', name: '(ไม่พบผู้ป่วย)', hn: '' };
     const step = ICU.STEPS.some(s => s.id === params[1]) ? params[1] : 'fancas';
-    const locked = h.status === 'handed_over';
+    const locked = h.status === 'handed_over' || !!h.deletedAt;
     const v = ICU.validate(h, p);
     const si = ICU.STEPS.findIndex(s => s.id === step);
     const key = h.id + step;
@@ -162,7 +167,7 @@
     const body = step === 'fancas' ? stepFancas(h) : step === 'fasthugbid' ? stepFH(h) : step === 'dope' ? stepDope(h) : step === 'care' ? stepCare(h) : stepSummary(h, p, v);
     const prev = si > 0 ? '#/handover/' + h.id + '/' + ICU.STEPS[si - 1].id : '#/home?date=' + h.date + '&shift=' + h.shift;
     const next = si < ICU.STEPS.length - 1 ? '#/handover/' + h.id + '/' + ICU.STEPS[si + 1].id : '';
-    const shiftOpts = ICU.SHIFTS.map(s => '<option value="' + s.id + '"' + (s.id === h.shift ? ' selected' : '') + '>' + s.label + ' (' + s.time + ')</option>').join('');
+    const shiftOpts = ICU.SHIFTS.concat(ICU.SHIFTS.some(s => s.id === h.shift) ? [] : [U.shift(h.shift)]).map(s => '<option value="' + s.id + '"' + (s.id === h.shift ? ' selected' : '') + '>' + s.label + ' (' + s.time + ')</option>').join('');
 
     return {
       title: ICU.STEPS[si].label + ' · ' + p.name, nav: 'home', back: prev, sideExtra, keepScroll,
@@ -170,8 +175,9 @@
         '<div class="card ho-head">' + ICU.ui.avatar(p.name) + '<div class="ho-who"><a href="#/patient/' + p.id + '"><b>' + esc(p.name) + '</b></a>' +
         '<small>' + ICU.patientMeta(p) + ' · ' + esc(p.bed || '-') + '</small></div>' +
         '<div class="ho-st"><span id="ho-badge">' + ICU.ui.badge(h.status) + '</span><small class="muted" id="save-ind">' + (locked ? 'ล็อกแล้ว' : 'บันทึกอัตโนมัติ') + '</small></div></div>' +
+        (h.deletedAt ? '<div class="notice">' + ICU.ui.icon('trash', 18) + '<span>บันทึกนี้อยู่ในถังขยะ (ลบโดย ' + esc(h.deletedBy || '-') + ') · กู้คืน / ลบถาวร ได้ที่หน้า "สรุป"</span></div>' : '') +
         (h.amendsId ? '<div class="notice info">บันทึกแก้ไข (amendment) ของบันทึกที่ส่งเวรแล้ว · เหตุผล: ' + esc(h.amendReason || '-') + '</div>' : '') +
-        (locked && step !== 'summary' ? '<div class="notice">' + ICU.ui.icon('shield', 18) + '<span>บันทึกนี้ส่งเวรแล้ว แก้ไขไม่ได้ · ถ้าต้องแก้ ให้ไปที่ "สรุป" → "สร้างบันทึกแก้ไข"</span></div>' : '') +
+        (locked && !h.deletedAt && step !== 'summary' ? '<div class="notice">' + ICU.ui.icon('shield', 18) + '<span>บันทึกนี้ส่งเวรแล้ว แก้ไขไม่ได้ · ถ้าต้องแก้ ให้ไปที่ "สรุป" → "สร้างบันทึกแก้ไข"</span></div>' : '') +
         '<details class="card ho-meta"' + (window.innerWidth > 900 ? ' open' : '') + '><summary class="sub-t">ข้อมูลการส่งเวร · เวร' + U.shift(h.shift).label + ' ' + U.thaiDate(h.date) + '</summary>' +
         '<fieldset class="grid g5"' + (locked ? ' disabled' : '') + '>' +
         '<label class="fld">วันที่<input type="date" data-path="date" value="' + esc(h.date) + '"></label>' +
@@ -293,6 +299,9 @@
             ICU.ui.toast('ส่งเวรเรียบร้อย', 'ok');
             return ICU.render();
           }
+          if (a === 'trash') return ICU.trashHandover(h.id, '#/history');
+          if (a === 'restore') return ICU.restoreHandover(h.id);
+          if (a === 'purge') return ICU.purgeHandover(h.id, '#/history?view=trash');
           if (a === 'amend') {
             const fd = await ICU.ui.dialog({ title: 'สร้างบันทึกแก้ไข', ok: 'สร้าง',
               html: '<p>บันทึกเดิมจะยังอยู่ (ไม่ถูกเขียนทับ) ระบบจะสร้างสำเนาใหม่ให้แก้ไขแล้วส่งเวรอีกครั้ง</p><label class="fld">เหตุผลที่ต้องแก้ไข *<textarea name="reason" required rows="3"></textarea></label>' });

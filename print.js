@@ -67,7 +67,7 @@
       '<div class="pp-tags"><i>FANCAS</i><i>FASTHUGBID</i><i>DOPE</i><i>สิ่งที่ต้องเฝ้าระวัง</i></div></div>' +
       '<div class="pp-when"><div>วันที่ ' + line(blank ? '' : U.thaiDate(h.date), '24mm') + ' เวลา ' + line(blank ? '' : h.time, '12mm') + ' น.</div>' +
       '<div>ห้อง ICU / เตียงที่ ' + line(p.bed, '26mm') + '</div>' +
-      '<div>การส่งเวร ' + ['morning', 'afternoon', 'night'].map(s => cb(!blank && h.shift === s) + U.shift(s).label).join(' ') + '</div></div>' +
+      '<div>การส่งเวร ' + ICU.SHIFTS.map(x => x.id).concat(ICU.SHIFTS.some(x => x.id === h.shift) || blank || !h.shift ? [] : [h.shift]).map(s => cb(!blank && h.shift === s) + U.shift(s).label).join(' ') + '</div></div>' +
       '</header>' +
       '<div class="pp-pt"><span>ชื่อ-สกุลผู้ป่วย ' + line(p.name, '62mm') + '</span><span>HN ' + line(p.hn, '24mm') + '</span><span>AN ' + line(p.an, '24mm') + '</span>' +
       '<span>เพศ ' + cb(p.sex === 'M') + 'ชาย ' + cb(p.sex === 'F') + 'หญิง</span><span>อายุ ' + line(p.age, '9mm') + ' ปี</span><span>น้ำหนัก ' + line(p.weight, '10mm') + ' กก.</span></div>' +

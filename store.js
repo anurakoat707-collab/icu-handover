@@ -13,13 +13,12 @@
     dateStr(d) { d = d || new Date(); return d.getFullYear() + '-' + U.pad(d.getMonth() + 1) + '-' + U.pad(d.getDate()); },
     timeStr(d) { d = d || new Date(); return U.pad(d.getHours()) + ':' + U.pad(d.getMinutes()); },
     addDays(ds, n) { const d = new Date(ds + 'T12:00:00'); d.setDate(d.getDate() + n); return U.dateStr(d); },
-    currentShift(d) { const h = (d || new Date()).getHours(); return h < 8 ? 'night' : h < 16 ? 'morning' : 'afternoon'; },
-    shift(id) { return ICU.SHIFTS.find(s => s.id === id) || { id, label: id, time: '' }; },
-    slot(date, shift) { return date + '-' + (ICU.SHIFTS.findIndex(s => s.id === shift) + 1); },
-    prevSlot(date, shift) {
-      const i = ICU.SHIFTS.findIndex(s => s.id === shift);
-      return i > 0 ? { date, shift: ICU.SHIFTS[i - 1].id } : { date: U.addDays(date, -1), shift: ICU.SHIFTS[2].id };
-    },
+    /* morning 08:00-19:59 = today; night 20:00-07:59 = the date the night STARTED (00:00-07:59 -> yesterday) */
+    currentShift(d) { const h = (d || new Date()).getHours(); return h >= 8 && h < 20 ? 'morning' : 'night'; },
+    currentDate(d) { d = d || new Date(); return d.getHours() < 8 ? U.addDays(U.dateStr(d), -1) : U.dateStr(d); },
+    shift(id) { return ICU.SHIFTS.concat(ICU.LEGACY_SHIFTS || []).find(s => s.id === id) || { id, label: id, time: '', no: 0 }; },
+    slot(date, shift) { return date + '-' + U.shift(shift).no; },
+    prevSlot(date, shift) { return shift === 'night' ? { date, shift: 'morning' } : { date: U.addDays(date, -1), shift: 'night' }; },
     thaiDate(ds, long) {
       if (!ds) return '';
       const m = long
@@ -138,10 +137,12 @@
     },
 
     /* handovers */
-    handovers: () => db.handovers,
-    handover: id => db.handovers.find(h => h.id === id) || null,
+    /* records in the trash (deletedAt) or being deleted for good (purgedAt) are hidden everywhere except the trash */
+    handovers: () => db.handovers.filter(h => !h.deletedAt && !h.purgedAt),
+    handover: id => db.handovers.find(h => h.id === id && !h.purgedAt) || null,
+    trash: () => db.handovers.filter(h => h.deletedAt && !h.purgedAt).sort((a, b) => String(b.deletedAt).localeCompare(String(a.deletedAt))),
     handoversOf(pid) {
-      return db.handovers.filter(h => h.patientId === pid)
+      return S.handovers().filter(h => h.patientId === pid)
         .sort((a, b) => U.slot(b.date, b.shift).localeCompare(U.slot(a.date, a.shift)) || b.createdAt.localeCompare(a.createdAt));
     },
     /* newest record of a patient for a date + shift (an amendment wins over the record it amends) */
@@ -149,11 +150,11 @@
     latestHandover(pid, beforeSlot) {
       return S.handoversOf(pid).find(h => !beforeSlot || U.slot(h.date, h.shift) < beforeSlot) || null;
     },
-    supersededIds() { return new Set(db.handovers.filter(h => h.amendsId).map(h => h.amendsId)); },
+    supersededIds() { return new Set(S.handovers().filter(h => h.amendsId).map(h => h.amendsId)); },
 
     newHandover(pid, opt) {
       opt = opt || {};
-      const date = opt.date || U.dateStr(), shift = opt.shift || U.currentShift();
+      const date = opt.date || U.currentDate(), shift = opt.shift || U.currentShift();
       const src = opt.fromId ? S.handover(opt.fromId) : S.latestHandover(pid, U.slot(date, shift));
       const t = U.now();
       const h = Object.assign(emptyHandover(), {
@@ -177,7 +178,7 @@
     /* mutate(h) changes the record; returns false when locked */
     updateHandover(id, mutate) {
       const h = S.handover(id);
-      if (!h || h.status === 'handed_over') return false;
+      if (!h || h.status === 'handed_over' || h.deletedAt) return false;
       const before = U.clone(h);
       mutate(h);
       const ch = changed(before, h, HO_SECTIONS);
@@ -232,10 +233,49 @@
       return true;
     },
 
+    /* ------------------------------------------- delete: trash first, then for good */
+    trashHandover(id, reason) {
+      const h = S.handover(id);
+      if (!h || h.deletedAt) return false;
+      const t = U.now();
+      Object.assign(h, { deletedAt: t, deletedBy: me(), deleteReason: String(reason || '').trim() });
+      audit('handover', id, 'trash', [], 'ย้ายไปถังขยะ' + (h.deleteReason ? ': ' + h.deleteReason : ''));
+      markDirty('h', id);
+      save();
+      return true;
+    },
+    restoreHandover(id) {
+      const h = S.handover(id);
+      if (!h || !h.deletedAt) return false;
+      delete h.deletedAt; delete h.deletedBy; delete h.deleteReason;
+      audit('handover', id, 'restore', [], 'กู้คืนจากถังขยะ');
+      markDirty('h', id);
+      save();
+      return true;
+    },
+    /* only from the trash; with the cloud the record is removed after the server has it in the trash too */
+    purgeHandover(id) {
+      const h = S.handover(id);
+      if (!h || !h.deletedAt) return false;
+      const k = keyOf('h', id);
+      const p = S.patient(h.patientId);
+      audit('handover', id, 'purge', [], 'ลบถาวร: ' + (p ? p.name + ' ' : '') + 'เวร' + U.shift(h.shift).label + ' ' + U.thaiDate(h.date));
+      if (ICU.cloud && ICU.cloud.enabled() && db.sync.ver[k] != null) { h.purgedAt = U.now(); markDirty('h', id); }
+      else S.removeLocal('h', id);
+      save();
+      return true;
+    },
+    removeLocal(kind, id) {
+      const k = keyOf(kind, id);
+      if (kind === 'h') db.handovers = db.handovers.filter(x => x.id !== id);
+      else db.patients = db.patients.filter(x => x.id !== id);
+      delete db.sync.dirty[k]; delete db.sync.ver[k]; delete db.sync.base[k];
+    },
+
     /* ---------------------------------------------------- cloud sync helpers */
     syncState: () => db.sync,
     pendingCount: () => Object.keys(db.sync.dirty).length + db.sync.auditOut.length + db.sync.dels.length,
-    record(kind, id) { return kind === 'p' ? S.patient(id) : S.handover(id); },
+    record(kind, id) { return (kind === 'p' ? db.patients : db.handovers).find(x => x.id === id) || null; },
     /* a row from the server: replaces the local copy unless this device has unsent changes; returns true when applied */
     applyRemote(kind, row, force) {
       const k = keyOf(kind, row.id);
