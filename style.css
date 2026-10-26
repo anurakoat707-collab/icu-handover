@@ -421,6 +421,14 @@ body.locked #view { max-width: none; padding: 0; }
 .bed-tile.empty span { color: var(--mut); font-weight: 400; }
 .bed-tasks { position: absolute; top: 8px; right: 8px; min-width: 22px; height: 22px; padding: 0 6px; border-radius: 11px; background: var(--blue); color: #fff; font: 700 12px/22px sans-serif; text-align: center; font-style: normal; }
 
+/* ---------------------------------------------------------- trash */
+.trash-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 14px; position: sticky; top: calc(var(--demo-h) + 60px); z-index: 20; }
+.tsel { display: grid; place-items: center; width: 34px; height: 34px; cursor: pointer; }
+.tsel input { width: 22px; height: 22px; accent-color: var(--red); }
+.shift-tag.t-pt { background: #FCE7F3; color: #9D174D; }
+.icon-btn.danger-i:hover { background: var(--red-l) !important; color: var(--red) !important; }
+:root[data-theme=dark] .shift-tag.t-pt { background: #3A1630; color: #F9A8D4; }
+
 /* ---------------------------------------------------------- dark mode */
 :root[data-theme=dark] {
   --navy: #CFE0F5; --navy-2: #1B3354; --navy-3: #9DB8DA;
@@ -486,7 +494,7 @@ body.locked #view { max-width: none; padding: 0; }
   .dope-grid { grid-template-columns: repeat(4, 1fr); }
   .sum-grid { grid-template-columns: 380px 1fr; }
   .pt-head { display: grid !important; background: transparent !important; border: 0 !important; font-size: 12.5px; font-weight: 700; color: var(--mut); padding: 0 12px !important; }
-  .pt-row { grid-template-columns: 40px 2.2fr .8fr .8fr 1fr 1fr 1.4fr 1fr 130px; gap: 10px; border-radius: 0; margin: 0; border-width: 0 0 1px; }
+  .pt-row { grid-template-columns: 40px 2.2fr .8fr .8fr 1fr 1fr 1.4fr 1fr 176px; gap: 10px; border-radius: 0; margin: 0; border-width: 0 0 1px; }
   .ptable { gap: 0; background: #fff; border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
   .pt-no, .pt-name, .pt-st, .pt-act { grid-column: auto; display: flex; }
   .pt-no { color: var(--mut); justify-content: center; }

@@ -1,6 +1,6 @@
 /* Offline cache: the app works without internet after the first visit.
    Bump VERSION whenever a file changes so phones pick up the new version. */
-const VERSION = 'icu-handover-v8';
+const VERSION = 'icu-handover-v10';
 const FILES = [
   './', './index.html', './manifest.webmanifest',
   './style.css', './print.css',
@@ -9,7 +9,8 @@ const FILES = [
 ];
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(VERSION).then(c => c.addAll(FILES)).then(() => self.skipWaiting()));
+  /* cache: 'reload' = straight from GitHub, never an older copy from the browser cache */
+  e.waitUntil(caches.open(VERSION).then(c => c.addAll(FILES.map(f => new Request(f, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', e => {
@@ -18,11 +19,14 @@ self.addEventListener('activate', e => {
     .then(() => self.clients.claim()));
 });
 
-/* network first (new version when online), cache when offline */
+/* network first (new version when online), cache when offline.
+   no-cache = ask GitHub every time (GitHub Pages lets browsers keep files 10 min otherwise) */
 self.addEventListener('fetch', e => {
-  if (e.request.method !== 'GET' || !e.request.url.startsWith(self.location.origin)) { return; }
+  if (e.request.method !== 'GET' || !e.request.url.startsWith(self.location.origin) || e.request.headers.has('authorization')) { return; }
+  /* keep the original request (headers, mode); a navigation request cannot be copied with options -> use its url */
+  const req = e.request.mode === 'navigate' ? new Request(e.request.url, { cache: 'no-cache', credentials: 'same-origin' }) : new Request(e.request, { cache: 'no-cache' });
   e.respondWith(
-    fetch(e.request)
+    fetch(req)
       .then(res => { const copy = res.clone(); caches.open(VERSION).then(c => c.put(e.request, copy)); return res; })
       .catch(() => caches.match(e.request, { ignoreSearch: true }).then(r => r || caches.match('./index.html')))
   );

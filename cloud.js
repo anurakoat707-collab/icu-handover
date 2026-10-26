@@ -44,7 +44,7 @@
       }
       if (m.event === 'postgres_changes') {
         const t = m.payload && m.payload.data && m.payload.data.type;
-        if (t === 'DELETE') fullDone = false;          /* look at the id list on the next pull */
+        if (t === 'DELETE') fullDone = false;          /* look at the id lists on the next pull */
         schedule(300);
       }
       if (m.event === 'phx_error' || m.event === 'phx_close') ws.close();
@@ -169,6 +169,20 @@
         S.removeLocal('h', id);
       }
     }
+    /* patients deleted for good: their records are gone now -> remove the patient row */
+    for (const k of keys.filter(x => x[0] === 'p')) {
+      const id = k.slice(2), r = S.record('p', id);
+      if (!r || !r.purgedAt || sy.ver[k] == null || sy.dirty[k]) continue;
+      if (S.recordsOf(id).length) continue;                     /* a record is still waiting to be deleted */
+      try {
+        await api('DELETE', 'patients?id=eq.' + enc(id));
+        S.removeLocal('p', id);
+      } catch (e) {
+        if (e.code !== '23503') throw e;                       /* another phone added a record meanwhile */
+        delete r.purgedAt; r.deletedAt = r.deletedAt || U.now(); sy.dirty[k] = true;
+        ICU.toast('ลบผู้ป่วยถาวรไม่ได้: มีบันทึกใหม่จากเครื่องอื่น (ผู้ป่วยยังอยู่ในถังขยะ)', 'error');
+      }
+    }
     while (sy.dels.length) {
       await api('DELETE', 'handovers?id=eq.' + enc(sy.dels[0]));
       sy.dels.shift();
@@ -197,6 +211,8 @@
       /* records deleted for good (or empty drafts deleted) on other phones - checked about once a minute */
       const ids = (await api('GET', 'handovers?select=id')).map(r => r.id);
       if (S.dropRemoved('h', ids)) changedRemote = true;
+      const pids = (await api('GET', 'patients?select=id')).map(r => r.id);
+      if (S.dropRemoved('p', pids)) changedRemote = true;
       fullDone = true;
     }
     sy.lastPull = maxAt || '';

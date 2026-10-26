@@ -106,8 +106,9 @@
     saveSettings(s) { Object.assign(db.settings, s); save(); },
 
     /* patients */
-    patients(opts) { return db.patients.filter(p => (opts && opts.includeArchived) || !p.archivedAt); },
-    patient: id => db.patients.find(p => p.id === id) || null,
+    /* patients in the trash (deletedAt) or being deleted for good (purgedAt) never appear in lists */
+    patients(opts) { return db.patients.filter(p => !p.deletedAt && !p.purgedAt && ((opts && opts.includeArchived) || !p.archivedAt)); },
+    patient: id => db.patients.find(p => p.id === id && !p.purgedAt) || null,
     savePatient(data) {
       const hn = String(data.hn || '').trim();
       const dup = hn && db.patients.find(p => !p.archivedAt && p.hn === hn && p.id !== data.id);
@@ -140,7 +141,11 @@
     /* records in the trash (deletedAt) or being deleted for good (purgedAt) are hidden everywhere except the trash */
     handovers: () => db.handovers.filter(h => !h.deletedAt && !h.purgedAt),
     handover: id => db.handovers.find(h => h.id === id && !h.purgedAt) || null,
-    trash: () => db.handovers.filter(h => h.deletedAt && !h.purgedAt).sort((a, b) => String(b.deletedAt).localeCompare(String(a.deletedAt))),
+    /* trash = records deleted on their own (records deleted together with their patient are listed under the patient) */
+    trash: () => db.handovers.filter(h => h.deletedAt && !h.purgedAt && !h.deletedWith).sort((a, b) => String(b.deletedAt).localeCompare(String(a.deletedAt))),
+    trashPatients: () => db.patients.filter(p => p.deletedAt && !p.purgedAt).sort((a, b) => String(b.deletedAt).localeCompare(String(a.deletedAt))),
+    trashCount: () => S.trash().length + S.trashPatients().length,
+    recordsOf: pid => db.handovers.filter(h => h.patientId === pid && !h.purgedAt),
     handoversOf(pid) {
       return S.handovers().filter(h => h.patientId === pid)
         .sort((a, b) => U.slot(b.date, b.shift).localeCompare(U.slot(a.date, a.shift)) || b.createdAt.localeCompare(a.createdAt));
@@ -236,11 +241,12 @@
     },
 
     /* ------------------------------------------- delete: trash first, then for good */
-    trashHandover(id, reason) {
+    trashHandover(id, reason, withPatient) {
       const h = S.handover(id);
       if (!h || h.deletedAt) return false;
       const t = U.now();
       Object.assign(h, { deletedAt: t, deletedBy: me(), deleteReason: String(reason || '').trim() });
+      if (withPatient) h.deletedWith = withPatient;
       audit('handover', id, 'trash', [], 'ย้ายไปถังขยะ' + (h.deleteReason ? ': ' + h.deleteReason : ''));
       markDirty('h', id);
       save();
@@ -249,7 +255,7 @@
     restoreHandover(id) {
       const h = S.handover(id);
       if (!h || !h.deletedAt) return false;
-      delete h.deletedAt; delete h.deletedBy; delete h.deleteReason;
+      delete h.deletedAt; delete h.deletedBy; delete h.deleteReason; delete h.deletedWith;
       audit('handover', id, 'restore', [], 'กู้คืนจากถังขยะ');
       markDirty('h', id);
       save();
@@ -267,6 +273,50 @@
       save();
       return true;
     },
+    /* a patient goes to the trash together with all of his records; restore brings them back together */
+    trashPatient(id, reason) {
+      const p = S.patient(id);
+      if (!p || p.deletedAt) return false;
+      const r = String(reason || '').trim();
+      S.handoversOf(id).forEach(h => S.trashHandover(h.id, r, id));
+      Object.assign(p, { deletedAt: U.now(), deletedBy: me(), deleteReason: r });
+      audit('patient', id, 'trash', [], 'ย้ายผู้ป่วยไปถังขยะ' + (r ? ': ' + r : ''));
+      markDirty('p', id);
+      save();
+      return true;
+    },
+    restorePatient(id) {
+      const p = S.patient(id);
+      if (!p || !p.deletedAt) return false;
+      delete p.deletedAt; delete p.deletedBy; delete p.deleteReason;
+      S.recordsOf(id).filter(h => h.deletedWith === id).forEach(h => S.restoreHandover(h.id));
+      audit('patient', id, 'restore', [], 'กู้คืนผู้ป่วยจากถังขยะ');
+      markDirty('p', id);
+      save();
+      return true;
+    },
+    /* for good: every record of the patient first, then the patient (the server needs that order) */
+    purgePatient(id) {
+      const p = S.patient(id);
+      if (!p || !p.deletedAt) return false;
+      S.recordsOf(id).forEach(h => {
+        if (!h.deletedAt) Object.assign(h, { deletedAt: U.now(), deletedBy: me(), deletedWith: id });
+        S.purgeHandover(h.id);
+      });
+      audit('patient', id, 'purge', [], 'ลบผู้ป่วยถาวร: ' + p.name + (p.bed ? ' (' + p.bed + ')' : ''));
+      if (ICU.cloud && ICU.cloud.enabled() && db.sync.ver[keyOf('p', id)] != null) { p.purgedAt = U.now(); markDirty('p', id); }
+      else S.removeLocal('p', id);
+      save();
+      return true;
+    },
+    /* Settings -> clear everything: all patients (also archived) + their records to the trash */
+    trashAll(reason) {
+      let n = 0;
+      S.patients({ includeArchived: true }).forEach(p => { if (S.trashPatient(p.id, reason)) n++; });
+      S.handovers().forEach(h => { if (S.trashHandover(h.id, reason)) n++; });
+      return n;
+    },
+
     openTasks: h => ((h && h.care && h.care.tasks) || []).filter(t => !t.done),
     /* patients of a shift (still in the ICU, or with a record in that shift), sorted by bed */
     shiftRows(date, shift) {
@@ -283,7 +333,7 @@
       const day = 86400000;
       let n = 0;
       if (R.leftDays > 0) {
-        db.patients.filter(p => !p.archivedAt && p.status !== 'active').forEach(p => {
+        db.patients.filter(p => !p.archivedAt && !p.deletedAt && !p.purgedAt && p.status !== 'active').forEach(p => {
           const last = [p.updatedAt].concat(db.handovers.filter(h => h.patientId === p.id).map(h => h.updatedAt)).filter(Boolean).sort().pop();
           if (!last || now - Date.parse(last) < R.leftDays * day) return;
           S.handoversOf(p.id).forEach(h => { if (S.trashHandover(h.id, 'ลบอัตโนมัติ: ผู้ป่วยออกจาก ICU เกิน ' + R.leftDays + ' วัน')) n++; });

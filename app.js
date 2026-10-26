@@ -322,7 +322,8 @@
           '<span class="pt-st">' + UI.pBadge(p.status) + '</span>' +
           '<span class="pt-act"><a class="icon-btn" href="#/patient/' + p.id + '" title="ดูรายละเอียด" aria-label="ดูรายละเอียด">' + icon('eye') + '</a>' +
           '<a class="icon-btn" href="#/patient/' + p.id + '/edit" title="แก้ไขข้อมูล" aria-label="แก้ไขข้อมูล">' + icon('edit') + '</a>' +
-          (p.status === 'active' ? '<button class="icon-btn" data-open="' + p.id + '" title="บันทึกส่งเวรเวรนี้" aria-label="บันทึกส่งเวรเวรนี้">' + icon('clipboard') + '</button>' : '') + '</span></div>').join('') +
+          (p.status === 'active' ? '<button class="icon-btn" data-open="' + p.id + '" title="บันทึกส่งเวรเวรนี้" aria-label="บันทึกส่งเวรเวรนี้">' + icon('clipboard') + '</button>' : '') +
+          '<button class="icon-btn danger-i" data-ptrash="' + p.id + '" title="ลบ (ย้ายไปถังขยะ)" aria-label="ลบ">' + icon('trash') + '</button></span></div>').join('') +
         (items.length ? '' : '<div class="empty">ไม่พบผู้ป่วย</div>') + '</div>' +
         (pages > 1 ? '<div class="pager">' + Array.from({ length: pages }, (_, i) => '<button class="' + (i + 1 === pf.page ? 'on' : '') + '" data-page="' + (i + 1) + '">' + (i + 1) + '</button>').join('') + '</div>' : '');
     }
@@ -406,6 +407,7 @@
   ICU.views.patient = function (params, q) {
     const p = S.patient(params[0]);
     if (!p) return { redirect: '#/patients' };
+    if (p.deletedAt) return { redirect: '#/history?view=trash' };
     const tab = q.tab || 'info';
     const hs = S.handoversOf(p.id);
     const latest = hs[0];
@@ -446,6 +448,7 @@
         body +
         '<div class="action-bar"><a class="btn ghost" href="#/patient/' + p.id + '/edit">' + icon('edit') + 'แก้ไขข้อมูล</a>' +
         '<button class="btn ghost danger-t" id="p-archive">' + icon('archive') + 'เก็บถาวร</button>' +
+        '<button class="btn ghost danger-t" data-ptrash="' + p.id + '" data-after="#/patients">' + icon('trash') + 'ลบ (ย้ายไปถังขยะ)</button>' +
         (p.status === 'active' ? '<button class="btn primary" id="p-new">' + icon('clipboard') + (cur ? 'เปิดบันทึกเวรนี้' : 'สร้างบันทึกส่งเวร') + '</button>' : '') + '</div>',
       mount(el) {
         const nb = el.querySelector('#p-new');
@@ -520,31 +523,94 @@
     UI.toast('ลบถาวรแล้ว');
     if (after) UI.go(after); else render();
   };
+  /* patient -> trash (with all of his records) */
+  ICU.trashPatient = async function (id, after) {
+    const p = S.patient(id);
+    if (!p) return;
+    const n = S.handoversOf(id).length;
+    const fd = await UI.dialog({
+      title: 'ลบผู้ป่วย', ok: 'ย้ายไปถังขยะ', danger: true,
+      html: '<p><b>' + esc(p.name) + '</b> ' + esc(p.bed || '') + '</p>' +
+        '<p class="hint">ผู้ป่วยและบันทึกส่งเวร ' + n + ' รายการ ย้ายไปถังขยะ (ทุกเครื่องในวอร์ดจะไม่เห็นในรายการ) · กู้คืนได้ที่ ประวัติ → ถังขยะ</p>' +
+        '<label class="fld">เหตุผล (ไม่บังคับ)<input name="reason" maxlength="200" placeholder="เช่น เพิ่มผิด / ข้อมูลซ้ำ"></label>'
+    });
+    if (!fd) return;
+    S.trashPatient(id, fd.get('reason'));
+    UI.toast('ย้ายผู้ป่วยไปถังขยะแล้ว', 'ok');
+    if (after) UI.go(after); else render();
+  };
+
   document.getElementById('view').addEventListener('click', e => {
-    const b = e.target.closest('[data-trash],[data-restore],[data-purge]');
+    const b = e.target.closest('[data-trash],[data-restore],[data-purge],[data-ptrash]');
     if (!b) return;
-    if (b.dataset.trash) ICU.trashHandover(b.dataset.trash);
+    if (b.dataset.ptrash) ICU.trashPatient(b.dataset.ptrash, b.dataset.after);
+    else if (b.dataset.trash) ICU.trashHandover(b.dataset.trash);
     else if (b.dataset.restore) ICU.restoreHandover(b.dataset.restore);
-    else ICU.purgeHandover(b.dataset.purge);
+    else if (b.dataset.purge) ICU.purgeHandover(b.dataset.purge);
   });
 
+  /* trash: patients (with their records) + single records · tick to restore / delete several at once */
   function trashView() {
-    const list = S.trash();
+    const pts = S.trashPatients(), list = S.trash();
+    const total = pts.length + list.length;
+    const who = x => '<small>ลบโดย ' + esc(x.deletedBy || '-') + ' · ' + U.thaiDateTime(x.deletedAt) + (x.deleteReason ? ' · เหตุผล: ' + esc(x.deleteReason) : '') + '</small>';
+    const sel = key => '<label class="tsel"><input type="checkbox" data-sel="' + key + '" aria-label="เลือก"></label>';
+    const ptHtml = pts.map(p => '<div class="hitem card">' + sel('p:' + p.id) +
+      '<span class="shift-tag t-pt">ผู้ป่วย</span><div class="hi-main"><b>' + esc(p.name) + '</b> <small class="muted">' + esc(p.bed || '') + ' · บันทึก ' + S.recordsOf(p.id).length + ' รายการ</small><br>' + who(p) + '</div>' +
+      '<div class="btns"><button class="btn ghost sm" data-one="restore" data-key="p:' + p.id + '">กู้คืน</button><button class="btn danger sm" data-one="purge" data-key="p:' + p.id + '">ลบถาวร</button></div></div>').join('');
+    const hHtml = list.map(h => {
+      const p = S.patient(h.patientId) || { name: '(ผู้ป่วยถูกลบ)' };
+      return '<div class="hitem card">' + sel('h:' + h.id) +
+        '<span class="shift-tag s-' + h.shift + '">เวร' + U.shift(h.shift).label + '</span>' +
+        '<div class="hi-main"><b>' + esc(p.name) + '</b> <small class="muted">' + U.thaiDate(h.date) + '</small><br>' + who(h) + '</div>' + UI.badge(h.status) +
+        '<div class="btns"><a class="btn ghost sm" href="#/handover/' + h.id + '/summary">ดู</a>' +
+        '<button class="btn ghost sm" data-one="restore" data-key="h:' + h.id + '">กู้คืน</button><button class="btn danger sm" data-one="purge" data-key="h:' + h.id + '">ลบถาวร</button></div></div>';
+    }).join('');
     return {
       title: 'ถังขยะ', nav: 'history', back: '#/history',
-      html: pageHead('ถังขยะ', 'Deleted handovers', '<a class="btn ghost" href="#/history">' + icon('back') + 'กลับไปประวัติ</a>') +
-        '<p class="hint">บันทึกที่ลบแล้ว กู้คืนได้ หรือลบถาวร (ลบถาวรแล้วจะหายจากทุกเครื่อง กู้คืนไม่ได้)</p>' +
-        (list.length ? '<div class="hlist">' + list.map(h => {
-          const p = S.patient(h.patientId) || { name: '(ผู้ป่วยถูกเก็บถาวร)' };
-          return '<div class="hitem card">' +
-            '<span class="shift-tag s-' + h.shift + '">เวร' + U.shift(h.shift).label + '</span>' +
-            '<div class="hi-main"><b>' + esc(p.name) + '</b> <small class="muted">' + U.thaiDate(h.date) + '</small><br>' +
-            '<small>ลบโดย ' + esc(h.deletedBy || '-') + ' · ' + U.thaiDateTime(h.deletedAt) + (h.deleteReason ? ' · เหตุผล: ' + esc(h.deleteReason) : '') + '</small></div>' +
-            UI.badge(h.status) +
-            '<div class="btns"><a class="btn ghost sm" href="#/handover/' + h.id + '/summary">ดู</a>' +
-            '<button class="btn ghost sm" data-restore="' + h.id + '">กู้คืน</button>' +
-            '<button class="btn danger sm" data-purge="' + h.id + '">ลบถาวร</button></div></div>';
-        }).join('') + '</div>' : '<div class="empty card">' + icon('trash', 40) + '<p>ถังขยะว่าง</p></div>')
+      html: pageHead('ถังขยะ', 'Trash', '<a class="btn ghost" href="#/history">' + icon('back') + 'กลับไปประวัติ</a>') +
+        '<p class="hint">ผู้ป่วย / บันทึกที่ลบแล้ว กู้คืนได้ หรือลบถาวร (ลบถาวรแล้วจะหายจากทุกเครื่อง กู้คืนไม่ได้)</p>' +
+        (total ? '<div class="card trash-bar"><label class="ck"><input type="checkbox" id="sel-all"><span>เลือกทั้งหมด (' + total + ')</span></label>' +
+          '<div class="btns"><button class="btn ghost" id="restore-sel" disabled>กู้คืนที่เลือก</button><button class="btn danger" id="purge-sel" disabled>ลบถาวรที่เลือก</button></div></div>' +
+          (pts.length ? '<h3 class="h-date">ผู้ป่วย (' + pts.length + ')</h3><div class="hlist">' + ptHtml + '</div>' : '') +
+          (list.length ? '<h3 class="h-date">บันทึกส่งเวร (' + list.length + ')</h3><div class="hlist">' + hHtml + '</div>' : '')
+          : '<div class="empty card">' + icon('trash', 40) + '<p>ถังขยะว่าง</p></div>'),
+      mount(el) {
+        if (!total) return;
+        const boxes = () => Array.from(el.querySelectorAll('[data-sel]'));
+        const picked = () => boxes().filter(b => b.checked).map(b => b.dataset.sel);
+        const all = el.querySelector('#sel-all'), rb = el.querySelector('#restore-sel'), pb = el.querySelector('#purge-sel');
+        const paint = () => {
+          const n = picked().length;
+          rb.disabled = pb.disabled = !n;
+          rb.textContent = 'กู้คืนที่เลือก' + (n ? ' (' + n + ')' : '');
+          pb.textContent = 'ลบถาวรที่เลือก' + (n ? ' (' + n + ')' : '');
+          all.checked = n === boxes().length; all.indeterminate = n > 0 && n < boxes().length;
+        };
+        all.onchange = () => { boxes().forEach(b => { b.checked = all.checked; }); paint(); };
+        boxes().forEach(b => { b.onchange = paint; });
+        const restore = keys => {
+          keys.forEach(k => { if (k[0] === 'p') S.restorePatient(k.slice(2)); else S.restoreHandover(k.slice(2)); });
+          UI.toast('กู้คืนแล้ว ' + keys.length + ' รายการ', 'ok'); render();
+        };
+        const purge = async keys => {
+          const np = keys.filter(k => k[0] === 'p').length, nh = keys.length - np;
+          const fd = await UI.dialog({
+            title: 'ลบถาวร ' + keys.length + ' รายการ', ok: 'ลบถาวร', danger: true,
+            html: '<p>' + (np ? 'ผู้ป่วย ' + np + ' ราย (พร้อมบันทึกทั้งหมดของผู้ป่วย) ' : '') + (nh ? 'บันทึกส่งเวร ' + nh + ' รายการ ' : '') +
+              'จะถูกลบออกจาก<b>ทุกเครื่องในวอร์ด</b> และ<b>กู้คืนไม่ได้</b> (ประวัติการแก้ไขยังบันทึกว่าใครลบ)</p>' +
+              '<label class="fld">พิมพ์คำว่า ลบ เพื่อยืนยัน<input name="c" required autocomplete="off"></label>',
+            validate: f => f.get('c').trim() === 'ลบ' ? '' : 'พิมพ์คำว่า ลบ ให้ถูกต้อง'
+          });
+          if (!fd) return;
+          keys.forEach(k => { if (k[0] === 'p') S.purgePatient(k.slice(2)); else S.purgeHandover(k.slice(2)); });
+          UI.toast('ลบถาวรแล้ว ' + keys.length + ' รายการ'); render();
+        };
+        rb.onclick = () => restore(picked());
+        pb.onclick = () => purge(picked());
+        el.querySelectorAll('[data-one]').forEach(b => { b.onclick = () => (b.dataset.one === 'restore' ? restore : purge)([b.dataset.key]); });
+        paint();
+      }
     };
   }
 
@@ -560,7 +626,7 @@
     const link = (r, s) => '#/history?range=' + r + '&status=' + s + '&q=' + encodeURIComponent(qq);
     return {
       title: 'ประวัติการส่งเวร',
-      html: pageHead('ประวัติการส่งเวร', 'Handover History', '<a class="btn ghost" href="#/history?view=trash">' + icon('trash') + 'ถังขยะ (' + S.trash().length + ')</a>') +
+      html: pageHead('ประวัติการส่งเวร', 'Handover History', '<a class="btn ghost" href="#/history?view=trash">' + icon('trash') + 'ถังขยะ (' + S.trashCount() + ')</a>') +
         '<div class="card filters">' +
         '<label class="search">' + icon('search') + '<input type="search" id="h-q" placeholder="ค้นหา HN, AN, ชื่อผู้ป่วย, เตียง..." value="' + esc(qq) + '"></label>' +
         '<div class="chips">' + [['all', 'ทั้งหมด'], ['today', 'วันนี้'], ['7', '7 วัน'], ['30', '30 วัน']].map(r => '<a class="chip' + (r[0] === range ? ' on' : '') + '" href="' + link(r[0], st) + '">' + r[1] + '</a>').join('') + '</div>' +
@@ -617,7 +683,8 @@
             '<p>สถานะ: <b>' + esc(cs.lastOk ? 'ซิงก์ล่าสุด ' + U.timeStr(cs.lastOk) : 'ยังไม่ได้ซิงก์') + '</b> · รอส่ง <b>' + cs.pending + '</b> รายการ' +
             (cs.lastErr ? '<br><small class="muted">' + esc(cs.lastErr) + '</small>' : '') + ' · ในเครื่องนี้ ' + raw.patients.length + ' ผู้ป่วย, ' + raw.handovers.length + ' บันทึก</p>' +
             '<div class="btns"><button class="btn primary" id="sync-now">ซิงก์ตอนนี้</button><button class="btn ghost" id="exp">' + icon('download') + 'Export สำรอง (.json)</button>' +
-            '<button class="btn ghost" id="reload">โหลดข้อมูลใหม่จาก Cloud</button><button class="btn ghost danger-t" id="signout">ออกจากระบบเครื่องนี้</button></div>' +
+            '<button class="btn ghost" id="reload">โหลดข้อมูลใหม่จาก Cloud</button><button class="btn ghost danger-t" id="signout">ออกจากระบบเครื่องนี้</button>' +
+            '<button class="btn danger" id="clear-all">' + icon('trash') + 'เคลียร์ข้อมูลทั้งหมด (ย้ายไปถังขยะ)</button></div>' +
             '<p class="hint">เข้าระบบด้วย: <b>' + esc(ICU.cloud.account() || '-') + '</b> · การเชื่อมต่อสด: <b>' + (cs.live ? 'เปิด (เห็นข้อมูลทันที)' : 'ไม่ได้เชื่อมต่อ (ใช้การดึงทุก ' + (ICU.CLOUD.pollSeconds || 15) + ' วินาที)') + '</b></p></section>' +
             '<section class="card"><h2 class="sec-t">' + icon('user') + 'บัญชีรายคน</h2>' +
             '<p class="hint">แต่ละคนมีชื่อผู้ใช้ + รหัสผ่านของตัวเองได้ (ประวัติการแก้ไขจะผูกกับบัญชีจริง และถอนสิทธิ์รายคนได้) · รหัสวอร์ดยังใช้ได้ (เว้นช่องชื่อผู้ใช้ว่าง)</p>' +
@@ -628,7 +695,8 @@
             '<p class="hint">ข้อมูลเก็บในเครื่องนี้เท่านั้น (' + raw.patients.length + ' ผู้ป่วย, ' + raw.handovers.length + ' บันทึก, ~' + size + ' KB) มือถือกับคอมไม่ซิงค์กันเอง ใช้ Export / Import</p>' +
             '<div class="btns"><button class="btn ghost" id="exp">' + icon('download') + 'Export (.json)</button>' +
             '<label class="btn ghost">' + icon('upload') + 'Import (.json)<input type="file" id="imp" accept=".json,application/json" hidden></label>' +
-            '<button class="btn ghost" id="demo">โหลดข้อมูลตัวอย่าง (สมมติ)</button><button class="btn danger" id="wipe">ลบข้อมูลทั้งหมด</button></div>' +
+            '<button class="btn ghost" id="demo">โหลดข้อมูลตัวอย่าง (สมมติ)</button><button class="btn danger" id="clear-all">' + icon('trash') + 'เคลียร์ข้อมูลทั้งหมด (ย้ายไปถังขยะ)</button>' +
+            '<button class="btn ghost danger-t" id="wipe">ลบข้อมูลในเครื่องถาวร</button></div>' +
             '<p class="hint">ข้อมูลตัวอย่างมีป้าย "ข้อมูลสมมติ" กดอีกครั้งเพื่อลบชุดเดิมแล้วสร้างใหม่ ข้อมูลผู้ป่วยจริงไม่ถูกแตะ</p></section>') +
         '<section class="card"><h2 class="sec-t">' + icon('trash') + 'ลบข้อมูลเก่าอัตโนมัติ (PDPA)</h2><p class="hint">' +
         (ICU.RETENTION.leftDays > 0 ? 'ผู้ป่วยที่ย้ายออก / จำหน่าย / เสียชีวิต และไม่มีการแก้ไขเกิน <b>' + ICU.RETENTION.leftDays + ' วัน</b> → เก็บถาวร + ย้ายบันทึกไปถังขยะ' : 'ปิดอยู่') +
@@ -647,6 +715,21 @@
           a.href = URL.createObjectURL(new Blob([S.exportJSON()], { type: 'application/json' }));
           a.download = 'icu-handover-' + U.dateStr() + '.json';
           document.body.appendChild(a); a.click(); a.remove();
+        };
+        el.querySelector('#clear-all').onclick = async () => {
+          const np = S.patients({ includeArchived: true }).length, nh = S.handovers().length;
+          if (!np && !nh) return UI.toast('ไม่มีข้อมูลให้เคลียร์');
+          const fd = await UI.dialog({
+            title: 'เคลียร์ข้อมูลทั้งหมด', ok: 'ย้ายไปถังขยะ', danger: true,
+            html: '<p>ผู้ป่วย <b>' + np + '</b> ราย และบันทึกส่งเวร <b>' + nh + '</b> รายการ จะย้ายไป<b>ถังขยะ</b>' + (cloud ? ' (มีผลกับทุกเครื่องในวอร์ด)' : '') +
+              ' · ยังกู้คืนได้ที่ ประวัติ → ถังขยะ</p><label class="fld">เหตุผล (ไม่บังคับ)<input name="reason" maxlength="200"></label>' +
+              '<label class="fld">พิมพ์คำว่า เคลียร์ เพื่อยืนยัน<input name="c" required autocomplete="off"></label>',
+            validate: f => f.get('c').trim() === 'เคลียร์' ? '' : 'พิมพ์คำว่า เคลียร์ ให้ถูกต้อง'
+          });
+          if (!fd) return;
+          const n = S.trashAll(fd.get('reason') || 'เคลียร์ข้อมูลทั้งหมด');
+          UI.toast('ย้ายไปถังขยะแล้ว ' + n + ' รายการ', 'ok');
+          UI.go('#/history?view=trash');
         };
         if (cloud) {
           el.querySelector('#sync-now').onclick = async () => { await ICU.cloud.run(); const s = ICU.cloud.status(); UI.toast(s.lastErr ? 'ซิงก์ไม่สำเร็จ: ' + s.lastErr : 'ซิงก์แล้ว', s.lastErr ? 'error' : 'ok'); render(); };
@@ -685,7 +768,12 @@
   };
 
   /* ---------------------------------------------------------------- start */
-  window.addEventListener('hashchange', render);
+  /* a new version was installed: reload at the next page change (typing is saved first by render's beforeLeave) */
+  let updateReady = false;
+  window.addEventListener('hashchange', () => {
+    if (updateReady) { if (ICU.beforeLeave) { ICU.beforeLeave(); ICU.beforeLeave = null; } location.reload(); return; }
+    render();
+  });
   document.getElementById('sync-chip').onclick = () => { ICU.cloud.run(); const s = ICU.cloud.status(); if (s.lastErr) UI.toast('ซิงก์: ' + s.lastErr, 'error'); };
   /* dark mode: 'night' = dark during the night shift */
   function applyTheme() {
@@ -722,6 +810,8 @@
   render();
   if (!ICU.cloud.enabled()) dailyClean();
   if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
-    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+    const hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController) { updateReady = true; UI.toast('มีเวอร์ชันใหม่ - จะโหลดเมื่อเปลี่ยนหน้า'); } });
+    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(r => r.update()).catch(() => {}));
   }
 })();
