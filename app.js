@@ -220,6 +220,26 @@
   }
   ICU.shiftWarn = shiftWarn;
 
+  /* weekly backup: the free database has no automatic backup -> remind on the home page after 7 days */
+  ICU.exportBackup = function () {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([S.exportJSON()], { type: 'application/json' }));
+    a.download = 'icu-handover-' + U.dateStr() + '.json';
+    document.body.appendChild(a); a.click(); a.remove();
+    S.saveSettings({ lastBackup: U.dateStr(), backupSnooze: '' });
+    UI.toast('บันทึกไฟล์สำรองแล้ว (icu-handover-' + U.dateStr() + '.json)', 'ok');
+  };
+  function backupWarn() {
+    const st = S.settings();
+    if (!S.patients({ includeArchived: true }).length) return '';
+    if (st.backupSnooze && st.backupSnooze > U.dateStr()) return '';
+    const days = st.lastBackup ? Math.floor((Date.parse(U.dateStr()) - Date.parse(st.lastBackup)) / 86400000) : null;
+    if (days !== null && days < 7) return '';
+    return '<div class="backup-warn no-print">' + icon('download', 18) + '<div><b>' + (days === null ? 'ยังไม่เคยสำรองข้อมูลในเครื่องนี้' : 'ไม่ได้สำรองข้อมูลมา ' + days + ' วัน') + '</b>' +
+      '<small>ฐานข้อมูลแบบฟรีไม่มีระบบสำรองให้ · กดสำรองสัปดาห์ละครั้ง เก็บไฟล์ไว้ในเครื่อง / Google Drive</small></div>' +
+      '<button class="btn primary sm" id="bk-now">สำรองตอนนี้</button><button class="btn ghost sm" id="bk-later">ภายหลัง</button></div>';
+  }
+
   ICU.views.home = function (p, q) {
     const date = q.date || U.currentDate(), shift = q.shift || U.currentShift();
     const slot = U.slot(date, shift);
@@ -275,7 +295,7 @@
           '<div class="btns"><button class="btn ghost" id="line-shift">' + icon('share') + 'ส่ง LINE ทั้งเวร</button>' +
           '<a class="btn ghost" href="#/print/shift?date=' + date + '&shift=' + shift + '">' + icon('print') + 'พิมพ์ทั้งเวร</a>' +
           '<a class="btn primary" href="#/patients/new">' + icon('plus') + 'เพิ่มผู้ป่วย</a></div>') +
-        shiftWarn(info, true) +
+        shiftWarn(info, true) + backupWarn() +
         '<div class="dash-bar card"><label class="date-in">' + icon('history', 16) + '<input type="date" id="home-date" value="' + date + '" aria-label="วันที่"></label>' +
         shiftSeg(date, shift, '#/home') + '<a class="btn ghost sm" href="#/home">เวรปัจจุบัน</a>' +
         '<div class="seg view-seg"><a href="#" data-view="cards" class="' + (viewMode === 'cards' ? 'on' : '') + '">การ์ด</a><a href="#" data-view="board" class="' + (viewMode === 'board' ? 'on' : '') + '">ผังเตียง</a></div></div>' +
@@ -288,6 +308,9 @@
         el.querySelector('#home-date').onchange = e => UI.go('#/home?date=' + e.target.value + '&shift=' + shift);
         el.querySelectorAll('[data-open]').forEach(b => { b.onclick = () => ICU.openHandover(b.dataset.open, date, shift); });
         el.querySelectorAll('[data-view]').forEach(a => { a.onclick = e => { e.preventDefault(); S.saveSettings({ homeView: a.dataset.view }); render(); }; });
+        const bk = el.querySelector('#bk-now'), bl = el.querySelector('#bk-later');
+        if (bk) bk.onclick = () => { ICU.exportBackup(); render(); };
+        if (bl) bl.onclick = () => { S.saveSettings({ backupSnooze: U.addDays(U.dateStr(), 1) }); render(); };
         el.querySelector('#line-shift').onclick = () => UI.share(ICU.shiftLineText(date, shift, S.shiftRows(date, shift)), 'ส่งเวร' + U.shift(shift).label);
       }
     };
@@ -716,12 +739,7 @@
         el.querySelector('#set-user').onsubmit = e => { e.preventDefault(); S.saveSettings(Object.fromEntries(new FormData(e.target))); UI.toast('บันทึกแล้ว', 'ok'); render(); };
         el.querySelector('#set-print').onsubmit = e => { e.preventDefault(); S.saveSettings(Object.fromEntries(new FormData(e.target))); UI.toast('บันทึกแล้ว', 'ok'); };
         el.querySelector('#set-view').onsubmit = e => { e.preventDefault(); S.saveSettings(Object.fromEntries(new FormData(e.target))); applyTheme(); UI.toast('บันทึกแล้ว', 'ok'); };
-        el.querySelector('#exp').onclick = () => {
-          const a = document.createElement('a');
-          a.href = URL.createObjectURL(new Blob([S.exportJSON()], { type: 'application/json' }));
-          a.download = 'icu-handover-' + U.dateStr() + '.json';
-          document.body.appendChild(a); a.click(); a.remove();
-        };
+        el.querySelector('#exp').onclick = () => { ICU.exportBackup(); render(); };
         /* audit log: tick rows / all shown, delete selected, or clear everything */
         const audBoxes = () => Array.from(el.querySelectorAll('[data-aud]'));
         const audAll = el.querySelector('#aud-all'), audDel = el.querySelector('#aud-del');

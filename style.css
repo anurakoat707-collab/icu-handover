@@ -429,6 +429,9 @@ body.locked #view { max-width: none; padding: 0; }
 .tsel-td { width: 34px; }
 .tsel-td input { width: 20px; height: 20px; accent-color: var(--red); }
 .audit-bar { margin-bottom: 8px; }
+.backup-warn { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 12px 14px; margin-bottom: 14px; border-radius: 12px; background: var(--blue-l); color: #1E3A8A; border: 1px solid #BFDBFE; }
+.backup-warn > div { flex: 1 1 220px; min-width: 0; display: flex; flex-direction: column; }
+:root[data-theme=dark] .backup-warn { background: #1A2747; color: #C3D4FF; border-color: #2B3F6E; }
 .icon-btn.danger-i:hover { background: var(--red-l) !important; color: var(--red) !important; }
 :root[data-theme=dark] .shift-tag.t-pt { background: #3A1630; color: #F9A8D4; }
 
